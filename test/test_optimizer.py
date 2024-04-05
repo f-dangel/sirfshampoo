@@ -3,13 +3,15 @@
 from collections import OrderedDict
 
 from pytest import raises
-from torch.nn import Linear, ReLU, Sequential, Sigmoid
+from torch import manual_seed, rand
+from torch.nn import Linear, MSELoss, ReLU, Sequential, Sigmoid
 
 from sirfshampoo.optimizer import SIRFShampoo
 
 
 def test__create_mappings():
     """Test creation of optimizer-internal mappings."""
+    manual_seed(0)
     D_in, D_hidden, D_out = 5, 4, 3
 
     # use a nested network
@@ -74,3 +76,44 @@ def test__create_mappings():
     ]
     with raises(ValueError):
         SIRFShampoo(model, params=param_groups)
+
+
+def test_step_integration():
+    """Check the optimizer is able to take a couple of steps without erroring."""
+    manual_seed(0)
+    batch_size = 6
+    D_in, D_hidden, D_out = 5, 4, 3
+    # use a nested network
+    inner = Sequential(
+        OrderedDict(
+            {
+                "linear": Linear(D_hidden, D_hidden, bias=False),
+                "sigmoid": Sigmoid(),
+            }
+        )
+    )
+    model = Sequential(
+        OrderedDict(
+            {
+                "linear1": Linear(D_in, D_hidden),
+                "relu1": ReLU(),
+                "inner": inner,
+                "linear2": Linear(D_hidden, D_out),
+            }
+        )
+    )
+    loss_func = MSELoss()
+    X, y = rand(batch_size, D_in), rand(batch_size, D_out)
+
+    optimizer = SIRFShampoo(model, beta1=0.1)
+    num_steps = 5
+    losses = []
+    for step in range(num_steps):
+        optimizer.zero_grad()
+        loss = loss_func(model(X), y)
+        loss.backward()
+        losses.append(loss.item())
+        print(f"Step {step:03g}, Loss: {losses[-1]:.5f}")
+        optimizer.step()
+
+    assert losses[0] > losses[-1]

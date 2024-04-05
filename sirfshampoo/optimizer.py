@@ -1,8 +1,10 @@
 """Implementation of structured inverse-, root-free Shampoo."""
 
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from warnings import warn
 
+from torch import Tensor
 from torch.nn import Module, Parameter
 from torch.optim import Optimizer
 
@@ -78,3 +80,72 @@ class SIRFShampoo(Optimizer):
             layer_to_param_group[layer_name] = param_group_idx.pop()
 
         return params_in_layer, layer_to_param_group
+
+    def _get_param_group_entry(self, layer_name: str, key: str) -> Any:
+        """Get an entry from the parameter group of a layer.
+
+        Args:
+            layer_name: The name of the layer.
+            key: The key of the entry to get.
+
+        Returns:
+            The entry from the parameter group of the layer.
+        """
+        return self.param_groups[self._layer_to_param_group[layer_name]][key]
+
+    def _update_preconditioner(self, layer_name: str) -> None:
+        """Update the preconditioner of a layer.
+
+        Args:
+            layer_name: The name of the layer.
+        """
+        warn("_update_preconditioner is a dummy implementation.")
+
+    def _precondition_gradient(self, layer_name: str) -> Dict[str, Tensor]:
+        """Precondition the gradient of a layer.
+
+        Args:
+            layer_name: The name of the layer.
+
+        Returns:
+            The preconditioned gradient.
+        """
+        warn("_precondition_gradient is a dummy implementation.")
+        param_names = self._params_in_layer[layer_name]
+        return {
+            p_name: self.model.get_parameter(f"{layer_name}.{p_name}").grad
+            for p_name in param_names
+        }
+
+    def step(self, closure: Optional[Callable] = None) -> None:
+        """Perform a single optimization step.
+
+        Args:
+            closure: Not supported. Default: `None`.
+
+        Raises:
+            NotImplementedError: If `closure` is not `None`.
+        """
+        if closure is not None:
+            raise NotImplementedError("Closure is not supported.")
+
+        for layer_name in self._params_in_layer:
+            self._step(layer_name)
+
+    def _step(self, layer_name: str):
+        """Perform a single optimization step for a layer.
+
+        Args:
+            layer_name: The name of the layer.
+        """
+        param_names = self._params_in_layer[layer_name]
+        self._update_preconditioner(layer_name)
+        update = self._precondition_gradient(layer_name)
+        params = [
+            self.model.get_parameter(f"{layer_name}.{p_name}") for p_name in param_names
+        ]
+        beta1 = self._get_param_group_entry(layer_name, "beta1")
+
+        for p_name, p in zip(param_names, params):
+            p_step = update[p_name]
+            p.data.add_(p_step, alpha=-beta1)
