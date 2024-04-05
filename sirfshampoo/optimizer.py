@@ -4,7 +4,7 @@ from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from warnings import warn
 
-from torch import Tensor
+from torch import Tensor, zeros_like
 from torch.nn import Module, Parameter
 from torch.optim import Optimizer
 
@@ -17,6 +17,7 @@ class SIRFShampoo(Optimizer):
         model: Module,
         params: Optional[Union[List[Parameter], Dict[str, Any]]] = None,
         beta1: float = 0.001,
+        alpha1: float = 0.9,
     ):
         """Set up the optimizer.
 
@@ -26,8 +27,9 @@ class SIRFShampoo(Optimizer):
             params: The parameters to optimize. If `None`, all parameters of the
                 model are optimized. Default: `None`.
             beta1: Learning rate for the parameter update. Default: `0.001`.
+            alpha1: Momentum for the parameter update. Default: `0.9`.
         """
-        defaults = dict(beta1=beta1)
+        defaults = dict(beta1=beta1, alpha1=alpha1)
 
         if params is None:
             params = [p for p in model.parameters() if p.requires_grad]
@@ -145,7 +147,18 @@ class SIRFShampoo(Optimizer):
             self.model.get_parameter(f"{layer_name}.{p_name}") for p_name in param_names
         ]
         beta1 = self._get_param_group_entry(layer_name, "beta1")
+        alpha1 = self._get_param_group_entry(layer_name, "alpha1")
 
         for p_name, p in zip(param_names, params):
             p_step = update[p_name]
+
+            # momentum on previous updates
+            if alpha1 != 0:
+                param_state = self.state[p]
+                if "momentum_buffer" not in param_state:
+                    param_state["momentum_buffer"] = zeros_like(p.data)
+
+                param_state["momentum_buffer"].mul_(alpha1).add_(p_step)
+                p_step = param_state["momentum_buffer"]
+
             p.data.add_(p_step, alpha=-beta1)
