@@ -105,7 +105,7 @@ def test_step_integration():
     loss_func = MSELoss()
     X, y = rand(batch_size, D_in), rand(batch_size, D_out)
 
-    optimizer = SIRFShampoo(model, beta1=0.1)
+    optimizer = SIRFShampoo(model, beta1=0.1, kappa=0.001)
     num_steps = 5
     losses = []
     for step in range(num_steps):

@@ -18,8 +18,12 @@ class SIRFShampoo(Optimizer):
         params: Optional[Union[List[Parameter], Dict[str, Any]]] = None,
         beta1: float = 0.001,
         alpha1: float = 0.9,
+        kappa: float = 0.0,
     ):
         """Set up the optimizer.
+
+        Notation based on [Can We Remove the Square-Root in Adaptive Gradient
+        Methods?](https://openreview.net/pdf?id=vuMD71R20q)
 
         Args:
             model: The model to optimize. The optimizer needs access to the model
@@ -28,8 +32,9 @@ class SIRFShampoo(Optimizer):
                 model are optimized. Default: `None`.
             beta1: Learning rate for the parameter update. Default: `0.001`.
             alpha1: Momentum for the parameter update. Default: `0.9`.
+            kappa: Weight decay. Default: `0.0`.
         """
-        defaults = dict(beta1=beta1, alpha1=alpha1)
+        defaults = dict(beta1=beta1, alpha1=alpha1, kappa=kappa)
 
         if params is None:
             params = [p for p in model.parameters() if p.requires_grad]
@@ -148,9 +153,14 @@ class SIRFShampoo(Optimizer):
         ]
         beta1 = self._get_param_group_entry(layer_name, "beta1")
         alpha1 = self._get_param_group_entry(layer_name, "alpha1")
+        kappa = self._get_param_group_entry(layer_name, "kappa")
 
         for p_name, p in zip(param_names, params):
             p_step = update[p_name]
+
+            # add weight decay
+            if kappa != 0.0:
+                p_step.add_(p.data, alpha=kappa)
 
             # momentum on previous updates
             if alpha1 != 0:
