@@ -33,6 +33,7 @@ class SIRFShampoo(Optimizer):
         alpha1: float = 0.9,
         kappa: float = 0.0,
         batch_size: Union[int, Callable[[Tuple[Tensor, ...]], int]] = get_batch_size,
+        T: Union[int, Callable[[int], bool]] = 1,
         verbose_init: bool = False,
     ):
         """Set up the optimizer.
@@ -59,17 +60,21 @@ class SIRFShampoo(Optimizer):
                 of the neural network to the batch size (will be installed as pre-
                 forward hook). If not specified, we detect the batch size by using the
                 first input tensors leading dimension.
+            T: The pre-conditioner update frequency as integer or callable from the
+                optimizer's global step to a boolean that is `True` if the pre-
+                conditioner should be updated at that iteration. Default: `1`.
             verbose_init: Whether to print information at initialization, i.e. how
                 parameters are grouped and what pre-conditioners are used.
                 Default: `False`.
         """
-        defaults = dict(beta1=beta1, beta2=beta2, alpha1=alpha1, kappa=kappa)
+        defaults = dict(beta1=beta1, beta2=beta2, alpha1=alpha1, kappa=kappa, T=T)
 
         if params is None:
             params = [p for p in model.parameters() if p.requires_grad]
         super().__init__(params, defaults)
 
         self.model = model
+        self.global_step = 0
 
         # batch size detection
         if callable(batch_size):
@@ -118,6 +123,8 @@ class SIRFShampoo(Optimizer):
 
         for group_idx, _ in enumerate(self.param_groups):
             self._step(group_idx)
+
+        self.global_step += 1
 
     def print_group_info(self) -> None:
         """Print information about the parameter groups and pre-conditioners."""
@@ -279,6 +286,12 @@ class SIRFShampoo(Optimizer):
             NotImplementedError: If the preconditioner does not have 2 factors.
         """
         group = self.param_groups[group_idx]
+
+        # maybe skip the update depending on the update interval/schedule
+        T = group["T"]
+        skip = not T(self.global_step) if callable(T) else self.global_step % T != 0
+        if skip:
+            return
 
         prec = self.preconditioner[group_idx]
         if len(prec) != 2:

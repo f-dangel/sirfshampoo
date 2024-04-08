@@ -1,8 +1,9 @@
 """Test `sirfshampoo.optimizer` module."""
 
 from collections import OrderedDict
+from typing import Callable, Union
 
-from pytest import raises
+from pytest import mark, raises
 from torch import manual_seed, rand
 from torch.nn import Linear, MSELoss, ReLU, Sequential, Sigmoid
 
@@ -45,7 +46,7 @@ def test__one_param_group_per_preconditioner():
     manual_seed(0)
     D_in, D_hidden, D_out = 5, 4, 3
     model = nested_network(D_in, D_hidden, D_out)
-    defaults = {"beta1": 0.001, "beta2": 0.01, "alpha1": 0.9, "kappa": 0.0}
+    defaults = {"beta1": 0.001, "beta2": 0.01, "alpha1": 0.9, "kappa": 0.0, "T": 1}
 
     # one parameter group
     optimizer = SIRFShampoo(model, verbose_init=True)
@@ -131,8 +132,17 @@ def test_batch_size():
         assert optimizer._get_current_batch_size() == const_batch_size
 
 
-def test_step_integration():
-    """Check the optimizer is able to take a couple of steps without erroring."""
+T_CASES = [1, lambda step: step in [0, 3]]
+T_CASE_IDS = ["every", "custom"]
+
+
+@mark.parametrize("T", T_CASES, ids=T_CASE_IDS)
+def test_step_integration(T: Union[int, Callable[[int], int]]):
+    """Check the optimizer is able to take a couple of steps without erroring.
+
+    Args:
+        T: Pre-conditioner update schedule.
+    """
     manual_seed(0)
     batch_size = 6
     D_in, D_hidden, D_out = 5, 4, 3
@@ -140,7 +150,7 @@ def test_step_integration():
     loss_func = MSELoss()
     X, y = rand(batch_size, D_in), rand(batch_size, D_out)
 
-    optimizer = SIRFShampoo(model, beta1=0.1, kappa=0.001)
+    optimizer = SIRFShampoo(model, beta1=0.1, kappa=0.001, T=T)
     num_steps = 5
     losses = []
     for step in range(num_steps):
