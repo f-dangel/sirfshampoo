@@ -45,7 +45,7 @@ def test__one_param_group_per_preconditioner():
     manual_seed(0)
     D_in, D_hidden, D_out = 5, 4, 3
     model = nested_network(D_in, D_hidden, D_out)
-    defaults = {"beta1": 0.001, "alpha1": 0.9, "kappa": 0.0}
+    defaults = {"beta1": 0.001, "beta2": 0.01, "alpha1": 0.9, "kappa": 0.0}
 
     # one parameter group
     optimizer = SIRFShampoo(model, verbose_init=True)
@@ -61,7 +61,7 @@ def test__one_param_group_per_preconditioner():
         {
             "params": [model.linear1.weight, model.linear1.bias, model.linear2.bias],
             **defaults,
-            "lam": 1234.0,  # change lam to verify it is passed through the overwrite
+            "alpha1": 0.5,  # change alpha1 to verify it is passed through the overwrite
         },
         {"params": [model.inner.linear.weight]},
     ]
@@ -71,10 +71,10 @@ def test__one_param_group_per_preconditioner():
         {
             "params": [model.linear1.weight, model.linear1.bias],
             **defaults,
-            "lam": 1234.0,
+            "alpha1": 0.5,
         },
         {"params": [model.inner.linear.weight], **defaults},
-        {"params": [model.linear2.bias], **defaults, "lam": 1234.0},
+        {"params": [model.linear2.bias], **defaults, "alpha1": 0.5},
     ]
 
     # two parameter groups (sub-set of parameters), one with modified defaults,
@@ -84,17 +84,17 @@ def test__one_param_group_per_preconditioner():
         {
             "params": [model.linear1.weight, model.linear2.bias],
             **defaults,
-            "lam": 1234.0,  # change lam to verify it is passed through the overwrite
+            "alpha1": 0.5,  # change alpha1 to verify it is passed through the overwrite
         },
         {"params": [model.linear1.bias, model.inner.linear.weight]},
     ]
     optimizer = SIRFShampoo(model, params=param_groups, verbose_init=True)
     assert len(optimizer.param_groups) == 4
     assert optimizer.param_groups == [
-        {"params": [model.linear1.weight], **defaults, "lam": 1234.0},
+        {"params": [model.linear1.weight], **defaults, "alpha1": 0.5},
         {"params": [model.linear1.bias], **defaults},
         {"params": [model.inner.linear.weight], **defaults},
-        {"params": [model.linear2.bias], **defaults, "lam": 1234.0},
+        {"params": [model.linear2.bias], **defaults, "alpha1": 0.5},
     ]
 
 

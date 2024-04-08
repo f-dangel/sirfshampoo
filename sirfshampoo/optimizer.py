@@ -1,7 +1,6 @@
 """Implementation of structured inverse-, root-free Shampoo."""
 
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-from warnings import warn
 
 from torch import Tensor, eye, zeros_like
 from torch.nn import Module, Parameter
@@ -30,6 +29,7 @@ class SIRFShampoo(Optimizer):
         model: Module,
         params: Optional[Union[List[Parameter], List[Dict[str, Any]]]] = None,
         beta1: float = 0.001,
+        beta2: float = 0.01,
         alpha1: float = 0.9,
         kappa: float = 0.0,
         batch_size: Union[int, Callable[[Tuple[Tensor, ...]], int]] = get_batch_size,
@@ -52,6 +52,7 @@ class SIRFShampoo(Optimizer):
             params: The parameters to optimize. If `None`, all parameters of the
                 model are optimized. Default: `None`.
             beta1: Learning rate for the parameter update. Default: `0.001`.
+            beta2: Learning rate for the preconditioner update. Default: `0.01`.
             alpha1: Momentum for the parameter update. Default: `0.9`.
             kappa: Weight decay. Default: `0.0`.
             batch_size: The batch size as integer or a callable from the input tensors
@@ -62,7 +63,7 @@ class SIRFShampoo(Optimizer):
                 parameters are grouped and what pre-conditioners are used.
                 Default: `False`.
         """
-        defaults = dict(beta1=beta1, alpha1=alpha1, kappa=kappa)
+        defaults = dict(beta1=beta1, beta2=beta2, alpha1=alpha1, kappa=kappa)
 
         if params is None:
             params = [p for p in model.parameters() if p.requires_grad]
@@ -243,9 +244,10 @@ class SIRFShampoo(Optimizer):
         Args:
             group_idx: The index of the group in `self.param_groups`.
         """
-        group = self.param_groups[group_idx]
         self._update_preconditioner(group_idx)
-        updates = self._precondition_gradient(group)
+        updates = self._precondition_gradient(group_idx)
+
+        group = self.param_groups[group_idx]
         params = group["params"]
         beta1 = group["beta1"]
         alpha1 = group["alpha1"]
@@ -272,21 +274,59 @@ class SIRFShampoo(Optimizer):
 
         Args:
             group_idx: The index of the group in `self.param_groups`.
-        """
-        warn("_update_preconditioner is a dummy.")
-        return
 
-    def _precondition_gradient(self, group: Dict[str, Any]) -> List[Tensor]:
-        """Precondition the gradient of a parameter group.
+        Raises:
+            NotImplementedError: If the preconditioner does not have 2 factors.
+        """
+        group = self.param_groups[group_idx]
+
+        prec = self.preconditioner[group_idx]
+        if len(prec) != 2:
+            raise NotImplementedError("Only pre-conditioners with 2 factors supported.")
+        C, K = prec
+        dim_K, dim_C = K.shape[0], C.shape[0]
+        G = TensorCombiner.group([p.grad for p in group["params"]])
+
+        gamma = 1  # moving average, not sum
+        beta2 = group["beta2"]
+        B = self._get_current_batch_size()
+
+        CT_G_K = C.T @ G @ K  # shared between updates
+
+        # update C (first-order truncation of matrix exponential)
+        C_exp_arg = B * CT_G_K @ CT_G_K.T - dim_K * gamma * eye(
+            dim_C, device=C.device, dtype=C.dtype
+        )
+        C.add_(C_exp_arg, alpha=-beta2 / (2 * dim_K))
+
+        # update K (first-order truncation of matrix exponential)
+        K_exp_arg = B * CT_G_K.T @ CT_G_K - dim_C * gamma * eye(
+            dim_K, device=K.device, dtype=K.dtype
+        )
+        K.add_(K_exp_arg, alpha=-beta2 / (2 * dim_C))
+
+    def _precondition_gradient(self, group_idx: int) -> List[Tensor]:
+        """Multiply the pre-conditioner onto the gradient for a parameter group.
 
         Args:
-            group: A parameter group from the optimizer.
+            group_idx: The index of the group in `self.param_groups`.
 
         Returns:
             The preconditioned gradient. Has the same structure as the `'params'`
             entry of the parameter group.
+
+        Raises:
+            NotImplementedError: If the preconditioner does not have 2 factors.
         """
-        warn("_precondition_gradient is a dummy implementation.")
+        group = self.param_groups[group_idx]
         params = group["params"]
+
+        prec = self.preconditioner[group_idx]
+        if len(prec) != 2:
+            raise NotImplementedError("Only pre-conditioners with 2 factors supported.")
+
+        C, K = prec
         G = TensorCombiner.group([p.grad for p in params])
-        return TensorCombiner.ungroup(G, [p.shape for p in params])
+        G_preconditioned = (C @ C.T) @ G @ (K @ K.T)
+
+        return TensorCombiner.ungroup(G_preconditioned, [p.shape for p in params])
