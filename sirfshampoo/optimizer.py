@@ -109,6 +109,8 @@ class SIRFShampoo(Optimizer):
         if verbose_init:
             self.print_group_info()
 
+        self._verify_hyperparameters()
+
     def step(self, closure: Optional[Callable] = None) -> None:
         """Perform a single optimization step.
 
@@ -151,12 +153,12 @@ class SIRFShampoo(Optimizer):
             The current batch size.
 
         Raises:
-            RuntimeError: If the batch size is not an integer.
+            RuntimeError: If the batch size is negative or not an integer.
         """
-        if isinstance(self.batch_size, int):
+        if isinstance(self.batch_size, int) and self.batch_size > 0:
             return self.batch_size
 
-        raise RuntimeError(f"Batch size is not an integer: {self.batch_size}")
+        raise RuntimeError(f"Batch size is not a positive integer: {self.batch_size}.")
 
     def _one_param_group_per_preconditioner(self) -> None:
         """Overwrite parameter groups so that a group's params share a pre-conditioner.
@@ -225,6 +227,32 @@ class SIRFShampoo(Optimizer):
             new_param_groups.append({**old_group, "params": params})
 
         self.param_groups = new_param_groups
+
+    def _verify_hyperparameters(self):
+        """Verify that the hyperparameters are valid.
+
+        Raises:
+            ValueError: If a hyperparameter is invalid.
+        """
+        beta1 = [group["beta1"] for group in self.param_groups]
+        if any(b1 <= 0 for b1 in beta1):
+            raise ValueError(f"beta1-s must be non-negative. Got: {beta1}.")
+
+        beta2 = [group["beta2"] for group in self.param_groups]
+        if any(b2 < 0 for b2 in beta2):
+            raise ValueError(f"beta2-s must be non-negative. Got: {beta2}.")
+
+        alpha1 = [group["alpha1"] for group in self.param_groups]
+        if not all(0 <= a1 < 1 for a1 in alpha1):
+            raise ValueError(f"alpha1-s must be in [0, 1). Got: {alpha1}.")
+
+        kappa = [group["kappa"] for group in self.param_groups]
+        if any(k < 0 for k in kappa):
+            raise ValueError(f"kappa-s must be non-negative. Got: {kappa}.")
+
+        T = [group["T"] for group in self.param_groups]
+        if not all((isinstance(t, int) and t > 0) or callable(t) for t in T):
+            raise ValueError(f"T-s must be positive integers or callables. Got: {T}.")
 
     def _initialize_preconditioner(self) -> List[List[Tensor]]:
         """Return preconditioner matrices initialized to identity.

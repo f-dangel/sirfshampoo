@@ -162,3 +162,21 @@ def test_step_integration(T: Union[int, Callable[[int], int]]):
         optimizer.step()
 
     assert losses[0] > losses[-1]
+
+
+def test__verify_hyperparameters():
+    """Test verification of hyperparameters."""
+    manual_seed(0)
+    D_in, D_hidden, D_out = 5, 4, 3
+    model = nested_network(D_in, D_hidden, D_out)
+
+    with raises(ValueError):
+        SIRFShampoo(model, beta1=-0.1)
+    with raises(ValueError):
+        SIRFShampoo(model, beta2=-0.1)
+    with raises(ValueError):
+        SIRFShampoo(model, alpha1=1)
+    with raises(ValueError):
+        SIRFShampoo(model, kappa=-0.1)
+    with raises(ValueError):
+        SIRFShampoo(model, T=-1)
