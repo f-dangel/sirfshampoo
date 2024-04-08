@@ -54,6 +54,7 @@ def test__one_param_group_per_preconditioner():
         "kappa": 0.0,
         "T": 1,
         "lam": 0.001,
+        "structures": "dense",
     }
 
     # one parameter group
@@ -190,3 +191,8 @@ def test__verify_hyperparameters():
         SIRFShampoo(model, kappa=-0.1)
     with raises(ValueError):
         SIRFShampoo(model, T=-1)
+    with raises(ValueError):
+        SIRFShampoo(model, structures="not_a_supported_structure")
+    too_many = ("dense", "dense", "dense")
+    with raises(ValueError):
+        SIRFShampoo(model, structures=too_many)

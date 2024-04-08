@@ -1,8 +1,10 @@
 """Implementation of structured inverse-, root-free Shampoo."""
 
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 
-from torch import Tensor, eye, zeros, zeros_like
+from singd.structures.base import StructuredMatrix
+from singd.structures.dense import DenseMatrix
+from torch import Tensor, zeros_like
 from torch.nn import Module, Parameter
 from torch.optim import Optimizer
 
@@ -22,7 +24,15 @@ def get_batch_size(inputs: Tuple[Tensor, ...]) -> int:
 
 
 class SIRFShampoo(Optimizer):
-    """Structured inverse-free and root-free Shampoo optimizer."""
+    """Structured inverse-free and root-free Shampoo optimizer.
+
+    Attributes:
+        SUPPORTED_STRUCTURES: A dictionary mapping structure names to the respective
+            classes of structured matrices that can be used for the pre-conditioner.
+            Currently, only `'dense'` is supported.
+    """
+
+    SUPPORTED_STRUCTURES: Dict[str, Type[StructuredMatrix]] = {"dense": DenseMatrix}
 
     def __init__(
         self,
@@ -36,6 +46,7 @@ class SIRFShampoo(Optimizer):
         kappa: float = 0.0,
         batch_size: Union[int, Callable[[Tuple[Tensor, ...]], int]] = get_batch_size,
         T: Union[int, Callable[[int], bool]] = 1,
+        structures: Union[str, Tuple[str, ...]] = "dense",
         verbose_init: bool = False,
     ):
         """Set up the optimizer.
@@ -67,6 +78,10 @@ class SIRFShampoo(Optimizer):
             T: The pre-conditioner update frequency as integer or callable from the
                 optimizer's global step to a boolean that is `True` if the pre-
                 conditioner should be updated at that iteration. Default: `1`.
+            structures: A string specifying the structure to use for the
+                pre-conditioner's Kronecker factors. If a tuple of strings is specified,
+                it must be of the same length as the number of Kronecker factors.
+                Supported choices are `'dense'`.
             verbose_init: Whether to print information at initialization, i.e. how
                 parameters are grouped and what pre-conditioners are used.
                 Default: `False`.
@@ -79,6 +94,7 @@ class SIRFShampoo(Optimizer):
             lam=lam,
             kappa=kappa,
             T=T,
+            structures=structures,
         )
 
         if params is None:
@@ -112,22 +128,21 @@ class SIRFShampoo(Optimizer):
         # pre-conditioner. This simplifies book-keeping when updating the
         # pre-conditioner and taking a step.
         self._one_param_group_per_preconditioner()
+        self._verify_hyperparameters()
 
         # The pre-conditioner for one group is a list of matrices (the Kronecker
         # factors). For a layer with 2d weight of shape `(D_out, D_in)`, the entries are
         # (C, K) from the paper where C is `(D_out, D_out)` and K is `(D_in, D_in)`.
-        self.preconditioner: List[List[Tensor]] = self._initialize_preconditioner(
-            "identity"
+        self.preconditioner: List[List[StructuredMatrix]] = (
+            self._initialize_preconditioner("identity")
         )
         # same for the momenta, i.e (m_C, m_K) from the paper for a 2d weight
-        self.preconditioner_momenta: List[List[Tensor]] = (
+        self.preconditioner_momenta: List[List[StructuredMatrix]] = (
             self._initialize_preconditioner("zero")
         )
 
         if verbose_init:
             self.print_group_info()
-
-        self._verify_hyperparameters()
 
     def step(self, closure: Optional[Callable] = None) -> None:
         """Perform a single optimization step.
@@ -153,11 +168,12 @@ class SIRFShampoo(Optimizer):
         for i, group in enumerate(self.param_groups):
             param_names = [param_to_names[p.data_ptr()] for p in group["params"]]
             other = {k: v for k, v in group.items() if k != "params"}
-            prec_shapes = [(str(s) for s in p.shape) for p in self.preconditioner[i]]
-            prec_structure = ["dense" for _ in prec_shapes]
+            precs = self.preconditioner[i]
+            shapes = [(str(s) for s in p.to_dense().shape) for p in precs]
+            structures = [p.__class__.__name__ for p in precs]
             prec_desc = [
                 f"{'x'.join(shape)} ({structure})"
-                for shape, structure in zip(prec_shapes, prec_structure)
+                for shape, structure in zip(shapes, structures)
             ]
             print(
                 f"Group {i}\n\t- Parameter names: {param_names}"
@@ -246,41 +262,48 @@ class SIRFShampoo(Optimizer):
 
         self.param_groups = new_param_groups
 
-    def _verify_hyperparameters(self):
+    def _verify_hyperparameters(self):  # noqa: C901
         """Verify that the hyperparameters are valid.
 
         Raises:
             ValueError: If a hyperparameter is invalid.
         """
-        beta1 = [group["beta1"] for group in self.param_groups]
-        if any(b1 <= 0 for b1 in beta1):
-            raise ValueError(f"beta1-s must be non-negative. Got: {beta1}.")
+        for beta in ["beta1", "beta2"]:
+            values = {group[beta] for group in self.param_groups}
+            if any(val <= 0 for val in values):
+                raise ValueError(f"{beta}-s must be non-negative. Got: {values}.")
 
-        beta2 = [group["beta2"] for group in self.param_groups]
-        if any(b2 < 0 for b2 in beta2):
-            raise ValueError(f"beta2-s must be non-negative. Got: {beta2}.")
+        for alpha in ["alpha1", "alpha2"]:
+            values = {group[alpha] for group in self.param_groups}
+            if not all(0 <= val < 1 for val in values):
+                raise ValueError(f"{alpha}-s must be in [0; 1). Got: {values}.")
 
-        alpha1 = [group["alpha1"] for group in self.param_groups]
-        if not all(0 <= a1 < 1 for a1 in alpha1):
-            raise ValueError(f"alpha1-s must be in [0, 1). Got: {alpha1}.")
-
-        alpha2 = [group["alpha2"] for group in self.param_groups]
-        if not all(0 <= a2 < 1 for a2 in alpha2):
-            raise ValueError(f"alpha2-s must be in [0, 1). Got: {alpha2}.")
-
-        lambdas = [group["lam"] for group in self.param_groups]
+        lambdas = {group["lam"] for group in self.param_groups}
         if any(lam < 0 for lam in lambdas):
             raise ValueError(f"lam-s must be non-negative. Got: {lambdas}.")
 
-        kappa = [group["kappa"] for group in self.param_groups]
+        kappa = {group["kappa"] for group in self.param_groups}
         if any(k < 0 for k in kappa):
             raise ValueError(f"kappa-s must be non-negative. Got: {kappa}.")
 
-        T = [group["T"] for group in self.param_groups]
+        T = {group["T"] for group in self.param_groups}
         if not all((isinstance(t, int) and t > 0) or callable(t) for t in T):
             raise ValueError(f"T-s must be positive integers or callables. Got: {T}.")
 
-    def _initialize_preconditioner(self, method: str) -> List[List[Tensor]]:
+        structures = set()
+        for group in self.param_groups:
+            struct = group["structures"]
+            if isinstance(struct, str):
+                structures.add(struct)
+            else:
+                structures.update(set(struct))
+        if any(struct not in self.SUPPORTED_STRUCTURES for struct in structures):
+            raise ValueError(
+                "Unsupported structure. Supported: "
+                + f"{list(self.SUPPORTED_STRUCTURES.keys())}. Got {structures}."
+            )
+
+    def _initialize_preconditioner(self, method: str) -> List[List[StructuredMatrix]]:
         """Return preconditioner matrices initialized to identity.
 
         Data type and devices are inferred from the parameters.
@@ -294,6 +317,7 @@ class SIRFShampoo(Optimizer):
 
         Raises:
             ValueError: If the method is not supported.
+            ValueError: If number of structures does not match number of factors.
         """
         preconditioners = []
         for group in self.param_groups:
@@ -303,10 +327,25 @@ class SIRFShampoo(Optimizer):
             kwargs = {"dtype": dtype, "device": device}
             dims = TensorCombiner.group(params).shape
 
+            # obtain constructors of structured matrices
+            structures = group["structures"]
+            if isinstance(structures, str):
+                structures = len(dims) * [structures]
+            elif len(structures) != len(dims):
+                raise ValueError(
+                    f"Number of structures ({len(structures)}) must match number"
+                    + f"of Kronecker factors ({len(dims)})."
+                )
+            classes = [self.SUPPORTED_STRUCTURES[struct] for struct in structures]
+
             if method == "identity":
-                preconditioners.append([eye(d, **kwargs) for d in dims])
+                preconditioners.append(
+                    [cls.eye(d, **kwargs) for cls, d in zip(classes, dims)]
+                )
             elif method == "zero":
-                preconditioners.append([zeros(d, d, **kwargs) for d in dims])
+                preconditioners.append(
+                    [cls.zeros(d, **kwargs) for cls, d in zip(classes, dims)]
+                )
             else:
                 raise ValueError(
                     f"Unsupported preconditioning method: {method}."
@@ -369,8 +408,8 @@ class SIRFShampoo(Optimizer):
             raise NotImplementedError("Only pre-conditioners with 2 factors supported.")
         C, K = prec
         m_C, m_K = prec_mom
-        dim_K, dim_C = K.shape[0], C.shape[0]
         G = TensorCombiner.group([p.grad for p in group["params"]])
+        dim_C, dim_K = G.shape
 
         gamma = 1  # moving average, not sum
         alpha2 = group["alpha2"]
@@ -378,25 +417,31 @@ class SIRFShampoo(Optimizer):
         lam = group["lam"]
         B = self._get_current_batch_size()
 
-        CT_G_K = C.T @ G @ K  # shared between updates
-        tr_KKT = (K @ K.T).trace()
-        tr_CCT = (C @ C.T).trace()
+        CT_G_K = C.rmatmat(K.rmatmat(G.T).T)  # shared between updates
+
+        # TODO Rewrite more efficiently using `StructuredMatrix` interface
+        C_dense = C.to_dense()
+        CT_C = C.from_dense(C_dense.T @ C_dense)
+        del C_dense
+
+        # TODO Rewrite more efficiently using `StructuredMatrix` interface
+        K_dense = K.to_dense()
+        KT_K = K.from_dense(K_dense.T @ K_dense)
+        del K_dense
 
         # Update Riemannian momentum on C and K
+        m_C_step = C.from_dense(CT_G_K @ CT_G_K.T).mul_(B)
+        m_C_step.add_(CT_C, alpha=lam * KT_K.average_trace() * dim_K)
+        m_C_step.diag_add_(-dim_K * gamma)
+
         m_C.mul_(alpha2)
-        m_C_step = (
-            B * CT_G_K @ CT_G_K.T
-            + lam * tr_KKT * C.T @ C
-            - dim_K * gamma * eye(dim_C, device=C.device, dtype=C.dtype)
-        )
         m_C.add_(m_C_step, alpha=0.5 / dim_K)
 
+        m_K_step = K.from_dense(CT_G_K.T @ CT_G_K).mul_(B)
+        m_K_step.add_(KT_K, alpha=lam * CT_C.average_trace() * dim_C)
+        m_K_step.diag_add_(-dim_C * gamma)
+
         m_K.mul_(alpha2)
-        m_K_step = (
-            B * CT_G_K.T @ CT_G_K
-            + lam * tr_CCT * K.T @ K
-            - dim_C * gamma * eye(dim_K, device=K.device, dtype=K.dtype)
-        )
         m_K.add_(m_K_step, alpha=0.5 / dim_C)
 
         # update C, K (first-order truncation of matrix exponential)
@@ -425,6 +470,9 @@ class SIRFShampoo(Optimizer):
 
         C, K = prec
         G = TensorCombiner.group([p.grad for p in params])
-        G_preconditioned = (C @ C.T) @ G @ (K @ K.T)
+        # multiply from the left with C @ C.T
+        G = C @ C.rmatmat(G)
+        # multiply from the right with K.T @ K
+        G = (K.rmatmat(K @ G.T)).T
 
-        return TensorCombiner.ungroup(G_preconditioned, [p.shape for p in params])
+        return TensorCombiner.ungroup(G, [p.shape for p in params])
