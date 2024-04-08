@@ -46,7 +46,15 @@ def test__one_param_group_per_preconditioner():
     manual_seed(0)
     D_in, D_hidden, D_out = 5, 4, 3
     model = nested_network(D_in, D_hidden, D_out)
-    defaults = {"beta1": 0.001, "beta2": 0.01, "alpha1": 0.9, "kappa": 0.0, "T": 1}
+    defaults = {
+        "beta1": 0.001,
+        "beta2": 0.01,
+        "alpha1": 0.9,
+        "alpha2": 0.5,
+        "kappa": 0.0,
+        "T": 1,
+        "lam": 0.001,
+    }
 
     # one parameter group
     optimizer = SIRFShampoo(model, verbose_init=True)
@@ -176,6 +184,8 @@ def test__verify_hyperparameters():
         SIRFShampoo(model, beta2=-0.1)
     with raises(ValueError):
         SIRFShampoo(model, alpha1=1)
+    with raises(ValueError):
+        SIRFShampoo(model, lam=-0.1)
     with raises(ValueError):
         SIRFShampoo(model, kappa=-0.1)
     with raises(ValueError):

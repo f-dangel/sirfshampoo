@@ -2,7 +2,7 @@
 
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
-from torch import Tensor, eye, zeros_like
+from torch import Tensor, eye, zeros, zeros_like
 from torch.nn import Module, Parameter
 from torch.optim import Optimizer
 
@@ -31,6 +31,8 @@ class SIRFShampoo(Optimizer):
         beta1: float = 0.001,
         beta2: float = 0.01,
         alpha1: float = 0.9,
+        alpha2: float = 0.5,
+        lam: float = 0.001,
         kappa: float = 0.0,
         batch_size: Union[int, Callable[[Tuple[Tensor, ...]], int]] = get_batch_size,
         T: Union[int, Callable[[int], bool]] = 1,
@@ -55,6 +57,8 @@ class SIRFShampoo(Optimizer):
             beta1: Learning rate for the parameter update. Default: `0.001`.
             beta2: Learning rate for the preconditioner update. Default: `0.01`.
             alpha1: Momentum for the parameter update. Default: `0.9`.
+            alpha2: Riemannian momentum on the pre-conditioners. Default `0.5`.
+            lam: Damping for the pre-conditioner update. Default: `0.001`.
             kappa: Weight decay. Default: `0.0`.
             batch_size: The batch size as integer or a callable from the input tensors
                 of the neural network to the batch size (will be installed as pre-
@@ -67,7 +71,15 @@ class SIRFShampoo(Optimizer):
                 parameters are grouped and what pre-conditioners are used.
                 Default: `False`.
         """
-        defaults = dict(beta1=beta1, beta2=beta2, alpha1=alpha1, kappa=kappa, T=T)
+        defaults = dict(
+            beta1=beta1,
+            beta2=beta2,
+            alpha1=alpha1,
+            alpha2=alpha2,
+            lam=lam,
+            kappa=kappa,
+            T=T,
+        )
 
         if params is None:
             params = [p for p in model.parameters() if p.requires_grad]
@@ -104,7 +116,13 @@ class SIRFShampoo(Optimizer):
         # The pre-conditioner for one group is a list of matrices (the Kronecker
         # factors). For a layer with 2d weight of shape `(D_out, D_in)`, the entries are
         # (C, K) from the paper where C is `(D_out, D_out)` and K is `(D_in, D_in)`.
-        self.preconditioner: List[List[Tensor]] = self._initialize_preconditioner()
+        self.preconditioner: List[List[Tensor]] = self._initialize_preconditioner(
+            "identity"
+        )
+        # same for the momenta, i.e (m_C, m_K) from the paper for a 2d weight
+        self.preconditioner_momenta: List[List[Tensor]] = (
+            self._initialize_preconditioner("zero")
+        )
 
         if verbose_init:
             self.print_group_info()
@@ -246,6 +264,14 @@ class SIRFShampoo(Optimizer):
         if not all(0 <= a1 < 1 for a1 in alpha1):
             raise ValueError(f"alpha1-s must be in [0, 1). Got: {alpha1}.")
 
+        alpha2 = [group["alpha2"] for group in self.param_groups]
+        if not all(0 <= a2 < 1 for a2 in alpha2):
+            raise ValueError(f"alpha2-s must be in [0, 1). Got: {alpha2}.")
+
+        lambdas = [group["lam"] for group in self.param_groups]
+        if any(lam < 0 for lam in lambdas):
+            raise ValueError(f"lam-s must be non-negative. Got: {lambdas}.")
+
         kappa = [group["kappa"] for group in self.param_groups]
         if any(k < 0 for k in kappa):
             raise ValueError(f"kappa-s must be non-negative. Got: {kappa}.")
@@ -254,13 +280,20 @@ class SIRFShampoo(Optimizer):
         if not all((isinstance(t, int) and t > 0) or callable(t) for t in T):
             raise ValueError(f"T-s must be positive integers or callables. Got: {T}.")
 
-    def _initialize_preconditioner(self) -> List[List[Tensor]]:
+    def _initialize_preconditioner(self, method: str) -> List[List[Tensor]]:
         """Return preconditioner matrices initialized to identity.
 
         Data type and devices are inferred from the parameters.
 
+        Args:
+            method: The method to use for preconditioning.
+                Must either be `'identity` or `'zero'`.
+
         Returns:
             A list of preconditioner matrices, one list per parameter group.
+
+        Raises:
+            ValueError: If the method is not supported.
         """
         preconditioners = []
         for group in self.param_groups:
@@ -269,7 +302,16 @@ class SIRFShampoo(Optimizer):
             (device,) = {p.device for p in params}
             kwargs = {"dtype": dtype, "device": device}
             dims = TensorCombiner.group(params).shape
-            preconditioners.append([eye(d, **kwargs) for d in dims])
+
+            if method == "identity":
+                preconditioners.append([eye(d, **kwargs) for d in dims])
+            elif method == "zero":
+                preconditioners.append([zeros(d, d, **kwargs) for d in dims])
+            else:
+                raise ValueError(
+                    f"Unsupported preconditioning method: {method}."
+                    + " Supported methods are 'identity' and 'zero'."
+                )
 
         return preconditioners
 
@@ -322,29 +364,44 @@ class SIRFShampoo(Optimizer):
             return
 
         prec = self.preconditioner[group_idx]
-        if len(prec) != 2:
+        prec_mom = self.preconditioner_momenta[group_idx]
+        if len(prec) != 2 or len(prec_mom) != 2:
             raise NotImplementedError("Only pre-conditioners with 2 factors supported.")
         C, K = prec
+        m_C, m_K = prec_mom
         dim_K, dim_C = K.shape[0], C.shape[0]
         G = TensorCombiner.group([p.grad for p in group["params"]])
 
         gamma = 1  # moving average, not sum
+        alpha2 = group["alpha2"]
         beta2 = group["beta2"]
+        lam = group["lam"]
         B = self._get_current_batch_size()
 
         CT_G_K = C.T @ G @ K  # shared between updates
+        tr_KKT = (K @ K.T).trace()
+        tr_CCT = (C @ C.T).trace()
 
-        # update C (first-order truncation of matrix exponential)
-        C_exp_arg = B * CT_G_K @ CT_G_K.T - dim_K * gamma * eye(
-            dim_C, device=C.device, dtype=C.dtype
+        # Update Riemannian momentum on C and K
+        m_C.mul_(alpha2)
+        m_C_step = (
+            B * CT_G_K @ CT_G_K.T
+            + lam * tr_KKT * C.T @ C
+            - dim_K * gamma * eye(dim_C, device=C.device, dtype=C.dtype)
         )
-        C.add_(C_exp_arg, alpha=-beta2 / (2 * dim_K))
+        m_C.add_(m_C_step, alpha=0.5 / dim_K)
 
-        # update K (first-order truncation of matrix exponential)
-        K_exp_arg = B * CT_G_K.T @ CT_G_K - dim_C * gamma * eye(
-            dim_K, device=K.device, dtype=K.dtype
+        m_K.mul_(alpha2)
+        m_K_step = (
+            B * CT_G_K.T @ CT_G_K
+            + lam * tr_CCT * K.T @ K
+            - dim_C * gamma * eye(dim_K, device=K.device, dtype=K.dtype)
         )
-        K.add_(K_exp_arg, alpha=-beta2 / (2 * dim_C))
+        m_K.add_(m_K_step, alpha=0.5 / dim_C)
+
+        # update C, K (first-order truncation of matrix exponential)
+        C.add_(m_C, alpha=-beta2)
+        K.add_(m_K, alpha=-beta2)
 
     def _precondition_gradient(self, group_idx: int) -> List[Tensor]:
         """Multiply the pre-conditioner onto the gradient for a parameter group.
