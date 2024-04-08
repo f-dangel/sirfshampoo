@@ -1,6 +1,6 @@
 """Implementation of structured inverse-, root-free Shampoo."""
 
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from warnings import warn
 
 from torch import Tensor, eye, zeros_like
@@ -8,6 +8,18 @@ from torch.nn import Module, Parameter
 from torch.optim import Optimizer
 
 from sirfshampoo.combiner import TensorCombiner
+
+
+def get_batch_size(inputs: Tuple[Tensor, ...]) -> int:
+    """Determine the batch size from input tensors to a neural network.
+
+    Args:
+        inputs: The input tensors passed to the `forward` of a neural network.
+
+    Returns:
+        The batch size.
+    """
+    return inputs[0].shape[0]
 
 
 class SIRFShampoo(Optimizer):
@@ -20,6 +32,7 @@ class SIRFShampoo(Optimizer):
         beta1: float = 0.001,
         alpha1: float = 0.9,
         kappa: float = 0.0,
+        batch_size: Union[int, Callable[[Tuple[Tensor, ...]], int]] = get_batch_size,
         verbose_init: bool = False,
     ):
         """Set up the optimizer.
@@ -41,6 +54,10 @@ class SIRFShampoo(Optimizer):
             beta1: Learning rate for the parameter update. Default: `0.001`.
             alpha1: Momentum for the parameter update. Default: `0.9`.
             kappa: Weight decay. Default: `0.0`.
+            batch_size: The batch size as integer or a callable from the input tensors
+                of the neural network to the batch size (will be installed as pre-
+                forward hook). If not specified, we detect the batch size by using the
+                first input tensors leading dimension.
             verbose_init: Whether to print information at initialization, i.e. how
                 parameters are grouped and what pre-conditioners are used.
                 Default: `False`.
@@ -52,6 +69,25 @@ class SIRFShampoo(Optimizer):
         super().__init__(params, defaults)
 
         self.model = model
+
+        # batch size detection
+        if callable(batch_size):
+            # install as module hook that updates the batch size in every forward pass
+            self.batch_size = None
+
+            def hook(module: Module, inputs: Tuple[Tensor, ...]):
+                """Forward hook to store the current batch size in the optimizer.
+
+                Args:
+                    module: The module that is called.
+                    inputs: The input tensors to the module.
+                """
+                self.batch_size = batch_size(inputs)
+
+            self.batch_size_handle = model.register_forward_pre_hook(hook)
+        else:
+            self.batch_size = batch_size
+            self.batch_size_handle = None
 
         # we rewrite the original parameter groups and create new ones such that each
         # parameter group contains the parameters that are treated jointly with one
@@ -99,6 +135,20 @@ class SIRFShampoo(Optimizer):
                 f"Group {i}\n\t- Parameter names: {param_names}"
                 f"\n\t-Pre-conditioner: {prec_desc}\n\t- Other: {other}"
             )
+
+    def _get_current_batch_size(self) -> int:
+        """Get the current batch size.
+
+        Returns:
+            The current batch size.
+
+        Raises:
+            RuntimeError: If the batch size is not an integer.
+        """
+        if isinstance(self.batch_size, int):
+            return self.batch_size
+
+        raise RuntimeError(f"Batch size is not an integer: {self.batch_size}")
 
     def _one_param_group_per_preconditioner(self) -> None:
         """Overwrite parameter groups so that a group's params share a pre-conditioner.
