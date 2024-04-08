@@ -2,15 +2,14 @@
 
 from collections import OrderedDict
 
-from pytest import raises
 from torch import manual_seed, rand
 from torch.nn import Linear, MSELoss, ReLU, Sequential, Sigmoid
 
 from sirfshampoo.optimizer import SIRFShampoo
 
 
-def test__create_mappings():
-    """Test creation of optimizer-internal mappings."""
+def test__one_param_group_per_preconditioner():
+    """Test creation of parameter groups (one per pre-conditioner)."""
     manual_seed(0)
     D_in, D_hidden, D_out = 5, 4, 3
 
@@ -33,49 +32,57 @@ def test__create_mappings():
             }
         )
     )
+    defaults = {"beta1": 0.001, "alpha1": 0.9, "kappa": 0.0}
 
     # one parameter group
-    optimizer = SIRFShampoo(model)
-    assert optimizer._params_in_layer == {
-        "linear1": ["weight", "bias"],
-        "inner.linear": ["weight"],
-        "linear2": ["weight", "bias"],
-    }
-    assert optimizer._layer_to_param_group == {
-        "linear1": 0,
-        "inner.linear": 0,
-        "linear2": 0,
-    }
+    optimizer = SIRFShampoo(model, verbose_init=True)
+    assert len(optimizer.param_groups) == 3
+    assert optimizer.param_groups == [
+        {"params": [model.linear1.weight, model.linear1.bias], **defaults},
+        {"params": [model.inner.linear.weight], **defaults},
+        {"params": [model.linear2.weight, model.linear2.bias], **defaults},
+    ]
 
-    # two parameter groups (sub-set)
+    # two parameter groups (sub-set of parameters), one with modified defaults
     param_groups = [
         {
-            "params": [
-                model.get_parameter("linear1.weight"),
-                model.get_parameter("linear2.bias"),
-            ]
+            "params": [model.linear1.weight, model.linear1.bias, model.linear2.bias],
+            **defaults,
+            "lam": 1234.0,  # change lam to verify it is passed through the overwrite
         },
-        {"params": [model.get_parameter("inner.linear.weight")]},
+        {"params": [model.inner.linear.weight]},
     ]
-    optimizer = SIRFShampoo(model, params=param_groups)
-    assert optimizer._params_in_layer == {
-        "linear1": ["weight"],
-        "inner.linear": ["weight"],
-        "linear2": ["bias"],
-    }
-    assert optimizer._layer_to_param_group == {
-        "linear1": 0,
-        "inner.linear": 1,
-        "linear2": 0,
-    }
+    optimizer = SIRFShampoo(model, params=param_groups, verbose_init=True)
+    assert len(optimizer.param_groups) == 3
+    assert optimizer.param_groups == [
+        {
+            "params": [model.linear1.weight, model.linear1.bias],
+            **defaults,
+            "lam": 1234.0,
+        },
+        {"params": [model.inner.linear.weight], **defaults},
+        {"params": [model.linear2.bias], **defaults, "lam": 1234.0},
+    ]
 
-    # two parameter groups (sub-set), layer parameters in different groups
+    # two parameter groups (sub-set of parameters), one with modified defaults,
+    # and parameters in one layer split into different groups such that they cannot
+    # be treated jointly
     param_groups = [
-        {"params": [model.get_parameter("linear2.bias")]},
-        {"params": [model.get_parameter("linear2.weight")]},
+        {
+            "params": [model.linear1.weight, model.linear2.bias],
+            **defaults,
+            "lam": 1234.0,  # change lam to verify it is passed through the overwrite
+        },
+        {"params": [model.linear1.bias, model.inner.linear.weight]},
     ]
-    with raises(ValueError):
-        SIRFShampoo(model, params=param_groups)
+    optimizer = SIRFShampoo(model, params=param_groups, verbose_init=True)
+    assert len(optimizer.param_groups) == 4
+    assert optimizer.param_groups == [
+        {"params": [model.linear1.weight], **defaults, "lam": 1234.0},
+        {"params": [model.linear1.bias], **defaults},
+        {"params": [model.inner.linear.weight], **defaults},
+        {"params": [model.linear2.bias], **defaults, "lam": 1234.0},
+    ]
 
 
 def test_step_integration():
