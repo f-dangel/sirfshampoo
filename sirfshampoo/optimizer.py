@@ -1,5 +1,6 @@
 """Implementation of structured inverse-, root-free Shampoo."""
 
+from math import sqrt
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 
 from singd.structures.base import StructuredMatrix
@@ -30,6 +31,9 @@ class SIRFShampoo(Optimizer):
         SUPPORTED_STRUCTURES: A dictionary mapping structure names to the respective
             classes of structured matrices that can be used for the pre-conditioner.
             Currently, only `'dense'` is supported.
+
+    TODO Add preconditioner_dtype, default value is the same as the parameter
+    TODO Implement update rule for Nd tensors
     """
 
     SUPPORTED_STRUCTURES: Dict[str, Type[StructuredMatrix]] = {"dense": DenseMatrix}
@@ -361,10 +365,13 @@ class SIRFShampoo(Optimizer):
             group_idx: The index of the group in `self.param_groups`.
         """
         self._update_preconditioner(group_idx)
+        # TODO We could incorporate a scaling trick here, and then return
+        # the scaling and incorporate it into the final update step
         updates = self._precondition_gradient(group_idx)
 
         group = self.param_groups[group_idx]
         params = group["params"]
+        # TODO Rename beta1 into lr to make it work with a learning rate scheduler
         beta1 = group["beta1"]
         alpha1 = group["alpha1"]
         kappa = group["kappa"]
@@ -417,36 +424,36 @@ class SIRFShampoo(Optimizer):
         lam = group["lam"]
         B = self._get_current_batch_size()
 
-        CT_G_K = C.rmatmat(K.rmatmat(G.T).T)  # shared between updates
+        # scale the preconditioner matrices to make the operations numerically stable
+        C_scaled = C * (1 / sqrt(dim_C))
+        K_scaled = K * (1 / sqrt(dim_K))
 
-        # TODO Rewrite more efficiently using `StructuredMatrix` interface
-        C_dense = C.to_dense()
-        CT_C = C.from_dense(C_dense.T @ C_dense)
-        del C_dense
-
-        # TODO Rewrite more efficiently using `StructuredMatrix` interface
-        K_dense = K.to_dense()
-        KT_K = K.from_dense(K_dense.T @ K_dense)
-        del K_dense
+        CT_G_K = C_scaled.rmatmat(K_scaled.rmatmat(G.T).T)  # shared between updates
+        CT_C = C_scaled.from_inner()
+        KT_K = K_scaled.from_inner()
 
         # Update Riemannian momentum on C and K
         m_C_step = C.from_dense(CT_G_K @ CT_G_K.T).mul_(B)
         m_C_step.add_(CT_C, alpha=lam * KT_K.average_trace() * dim_K)
-        m_C_step.diag_add_(-dim_K * gamma)
+        m_C_step.diag_add_(-gamma / dim_C)
 
         m_C.mul_(alpha2)
-        m_C.add_(m_C_step, alpha=0.5 / dim_K)
+        m_C.add_(m_C_step, alpha=(1 - alpha2) * dim_C / 2)
 
         m_K_step = K.from_dense(CT_G_K.T @ CT_G_K).mul_(B)
         m_K_step.add_(KT_K, alpha=lam * CT_C.average_trace() * dim_C)
-        m_K_step.diag_add_(-dim_C * gamma)
+        m_K_step.diag_add_(-gamma / dim_K)
 
         m_K.mul_(alpha2)
-        m_K.add_(m_K_step, alpha=0.5 / dim_C)
+        m_K.add_(m_K_step, alpha=(1 - alpha2) * dim_K / 2)
+
+        # matrix norm scaling
+        norm_C = C.frobenius_norm().clamp(min=1.0)
+        norm_K = K.frobenius_norm().clamp(min=1.0)
 
         # update C, K (first-order truncation of matrix exponential)
-        C.add_(m_C, alpha=-beta2)
-        K.add_(m_K, alpha=-beta2)
+        C.add_(m_C, alpha=-beta2 / norm_C)
+        K.add_(m_K, alpha=-beta2 / norm_K)
 
     def _precondition_gradient(self, group_idx: int) -> List[Tensor]:
         """Multiply the pre-conditioner onto the gradient for a parameter group.
