@@ -42,7 +42,7 @@ class SIRFShampoo(Optimizer):
         self,
         model: Module,
         params: Optional[Union[List[Parameter], List[Dict[str, Any]]]] = None,
-        beta1: float = 0.001,
+        lr: float = 0.001,  # beta1 in the paper
         beta2: float = 0.01,
         alpha1: float = 0.9,
         alpha2: float = 0.5,
@@ -69,7 +69,7 @@ class SIRFShampoo(Optimizer):
                 to figure out weights/biases of one layer.
             params: The parameters to optimize. If `None`, all parameters of the
                 model are optimized. Default: `None`.
-            beta1: Learning rate for the parameter update. Default: `0.001`.
+            lr: Learning rate for the parameter update. Default: `0.001`.
             beta2: Learning rate for the preconditioner update. Default: `0.01`.
             alpha1: Momentum for the parameter update. Default: `0.9`.
             alpha2: Riemannian momentum on the pre-conditioners. Default `0.5`.
@@ -91,7 +91,7 @@ class SIRFShampoo(Optimizer):
                 Default: `False`.
         """
         defaults = dict(
-            beta1=beta1,
+            lr=lr,
             beta2=beta2,
             alpha1=alpha1,
             alpha2=alpha2,
@@ -272,7 +272,7 @@ class SIRFShampoo(Optimizer):
         Raises:
             ValueError: If a hyperparameter is invalid.
         """
-        for beta in ["beta1", "beta2"]:
+        for beta in ["lr", "beta2"]:
             values = {group[beta] for group in self.param_groups}
             if any(val <= 0 for val in values):
                 raise ValueError(f"{beta}-s must be non-negative. Got: {values}.")
@@ -371,8 +371,7 @@ class SIRFShampoo(Optimizer):
 
         group = self.param_groups[group_idx]
         params = group["params"]
-        # TODO Rename beta1 into lr to make it work with a learning rate scheduler
-        beta1 = group["beta1"]
+        lr = group["lr"]
         alpha1 = group["alpha1"]
         kappa = group["kappa"]
 
@@ -390,7 +389,7 @@ class SIRFShampoo(Optimizer):
                 param_state["momentum_buffer"].mul_(alpha1).add_(p_step)
                 p_step = param_state["momentum_buffer"]
 
-            p.data.add_(p_step, alpha=-beta1)
+            p.data.add_(p_step, alpha=-lr)
 
     def _update_preconditioner(self, group_idx: int) -> None:
         """Update the preconditioner of a group.
