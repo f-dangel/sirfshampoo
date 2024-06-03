@@ -191,7 +191,7 @@ def test__verify_hyperparameters():
     model = nested_network(D_in, D_hidden, D_out)
 
     with raises(ValueError):
-j        SIRFShampoo(model, lr=-0.1)
+        SIRFShampoo(model, lr=-0.1)
     with raises(ValueError):
         SIRFShampoo(model, beta2=-0.1)
     with raises(ValueError):
