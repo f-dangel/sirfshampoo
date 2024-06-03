@@ -87,7 +87,7 @@ class SIRFShampoo(Optimizer):
                 pre-conditioner's Kronecker factors. If a tuple of strings is specified,
                 it must be of the same length as the number of Kronecker factors.
                 Supported choices are `'dense'`.
-            preconditioner_dtype: The data type to use for the pre-conditioner. If
+            preconditioner_dtypes: The data type to use for the pre-conditioner. If
                 supplied as tuple, the first entry will be used for `K` and the second
                 for `C`. If an entry is `None`, the data type of the corresponding
                 parameter will be used. Default: `None`.
@@ -359,7 +359,8 @@ class SIRFShampoo(Optimizer):
                 )
             else:
                 raise ValueError(
-                    f"Unsupported preconditioning method: {method}. Supported methods are 'identity' and 'zero'."
+                    f"Unsupported preconditioning method: {method}."
+                    + " Supported methods are 'identity' and 'zero'."
                 )
 
         return preconditioners

@@ -280,7 +280,11 @@ def test_step_integration(
 
 
 def verify_preconditioner_dtypes(optimizer: SIRFShampoo):
-    """Check that the preconditioner dtypes are as expected."""
+    """Check that the preconditioner dtypes are as expected.
+
+    Args:
+        optimizer: The optimizer to check.
+    """
     for group, preconditioner, preconditioner_momenta in zip(
         optimizer.param_groups,
         optimizer.preconditioner,
@@ -299,7 +303,11 @@ def verify_preconditioner_dtypes(optimizer: SIRFShampoo):
 
 
 def verify_preconditioner_structures(optimizer: SIRFShampoo):
-    """Check that the preconditioner structures are as expected."""
+    """Check that the preconditioner structures are as expected.
+
+    Args:
+        optimizer: The optimizer to check.
+    """
     for group, preconditioner, preconditioner_momenta in zip(
         optimizer.param_groups,
         optimizer.preconditioner,
