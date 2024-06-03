@@ -88,8 +88,8 @@ class SIRFShampoo(Optimizer):
                 it must be of the same length as the number of Kronecker factors.
                 Supported choices are `'dense'`.
             preconditioner_dtypes: The data type to use for the pre-conditioner. If
-                supplied as tuple, the first entry will be used for `K` and the second
-                for `C`. If an entry is `None`, the data type of the corresponding
+                supplied as tuple, the first entry will be used for `C` and the second
+                for `K`. If an entry is `None`, the data type of the corresponding
                 parameter will be used. Default: `None`.
             verbose_init: Whether to print information at initialization, i.e. how
                 parameters are grouped and what pre-conditioners are used.
@@ -334,8 +334,9 @@ class SIRFShampoo(Optimizer):
         """
         preconditioners = []
         for group in self.param_groups:
-            structures = group["structures"]
-            classes = [self.SUPPORTED_STRUCTURES[struct] for struct in structures]
+            classes = [
+                self.SUPPORTED_STRUCTURES[struct] for struct in group["structures"]
+            ]
 
             params = group["params"]
             (dev,) = {p.device for p in params}
@@ -344,7 +345,7 @@ class SIRFShampoo(Optimizer):
 
             dims = TensorCombiner.group(params).shape
 
-            if not len(dtypes) == len(structures) == len(dims):
+            if not len(dtypes) == len(classes) == len(dims):
                 raise RuntimeError(
                     "Number of structures, data dtypes, and dimensions do not match."
                 )
