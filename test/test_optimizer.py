@@ -6,6 +6,7 @@ from typing import Callable, Union
 from pytest import mark, raises
 from torch import manual_seed, rand
 from torch.nn import Linear, MSELoss, ReLU, Sequential, Sigmoid
+from torch.optim.lr_scheduler import StepLR
 
 from sirfshampoo.optimizer import SIRFShampoo
 
@@ -47,7 +48,7 @@ def test__one_param_group_per_preconditioner():
     D_in, D_hidden, D_out = 5, 4, 3
     model = nested_network(D_in, D_hidden, D_out)
     defaults = {
-        "beta1": 0.001,
+        "lr": 0.001,
         "beta2": 0.01,
         "alpha1": 0.9,
         "alpha2": 0.5,
@@ -144,13 +145,18 @@ def test_batch_size():
 T_CASES = [1, lambda step: step in [0, 3]]
 T_CASE_IDS = ["every", "custom"]
 
+SCHEDULE_LRS = [False, True]
+SCHEDULE_LR_IDS = ["constant-lr", "scheduled-lr"]
 
+
+@mark.parametrize("schedule_lr", SCHEDULE_LRS, ids=SCHEDULE_LR_IDS)
 @mark.parametrize("T", T_CASES, ids=T_CASE_IDS)
-def test_step_integration(T: Union[int, Callable[[int], int]]):
+def test_step_integration(T: Union[int, Callable[[int], int]], schedule_lr: bool):
     """Check the optimizer is able to take a couple of steps without erroring.
 
     Args:
         T: Pre-conditioner update schedule.
+        schedule_lr: Whether to use a learning rate scheduler.
     """
     manual_seed(0)
     batch_size = 6
@@ -159,8 +165,11 @@ def test_step_integration(T: Union[int, Callable[[int], int]]):
     loss_func = MSELoss()
     X, y = rand(batch_size, D_in), rand(batch_size, D_out)
 
-    optimizer = SIRFShampoo(model, beta1=0.1, kappa=0.001, T=T)
+    optimizer = SIRFShampoo(model, lr=0.1, kappa=0.001, T=T)
     num_steps = 5
+    if schedule_lr:
+        scheduler = StepLR(optimizer, num_steps // 2, gamma=0.9)
+
     losses = []
     for step in range(num_steps):
         optimizer.zero_grad()
@@ -169,6 +178,8 @@ def test_step_integration(T: Union[int, Callable[[int], int]]):
         losses.append(loss.item())
         print(f"Step {step:03g}, Loss: {losses[-1]:.5f}")
         optimizer.step()
+        if schedule_lr:
+            scheduler.step()
 
     assert losses[0] > losses[-1]
 
@@ -180,7 +191,7 @@ def test__verify_hyperparameters():
     model = nested_network(D_in, D_hidden, D_out)
 
     with raises(ValueError):
-        SIRFShampoo(model, beta1=-0.1)
+j        SIRFShampoo(model, lr=-0.1)
     with raises(ValueError):
         SIRFShampoo(model, beta2=-0.1)
     with raises(ValueError):
