@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 
 from singd.structures.base import StructuredMatrix
 from singd.structures.dense import DenseMatrix
-from torch import Tensor, zeros_like
+from torch import Tensor, dtype, zeros_like
 from torch.nn import Module, Parameter
 from torch.optim import Optimizer
 
@@ -32,8 +32,8 @@ class SIRFShampoo(Optimizer):
             classes of structured matrices that can be used for the pre-conditioner.
             Currently, only `'dense'` is supported.
 
-    TODO Add preconditioner_dtype, default value is the same as the parameter
     TODO Implement update rule for Nd tensors
+    TODO Support more structures
     """
 
     SUPPORTED_STRUCTURES: Dict[str, Type[StructuredMatrix]] = {"dense": DenseMatrix}
@@ -51,6 +51,7 @@ class SIRFShampoo(Optimizer):
         batch_size: Union[int, Callable[[Tuple[Tensor, ...]], int]] = get_batch_size,
         T: Union[int, Callable[[int], bool]] = 1,
         structures: Union[str, Tuple[str, ...]] = "dense",
+        preconditioner_dtypes: Optional[Union[dtype, Tuple[dtype, ...]]] = None,
         verbose_init: bool = False,
     ):
         """Set up the optimizer.
@@ -86,6 +87,10 @@ class SIRFShampoo(Optimizer):
                 pre-conditioner's Kronecker factors. If a tuple of strings is specified,
                 it must be of the same length as the number of Kronecker factors.
                 Supported choices are `'dense'`.
+            preconditioner_dtypes: The data type to use for the pre-conditioner. If
+                supplied as tuple, the first entry will be used for `C` and the second
+                for `K`. If an entry is `None`, the data type of the corresponding
+                parameter will be used. Default: `None`.
             verbose_init: Whether to print information at initialization, i.e. how
                 parameters are grouped and what pre-conditioners are used.
                 Default: `False`.
@@ -99,6 +104,7 @@ class SIRFShampoo(Optimizer):
             kappa=kappa,
             T=T,
             structures=structures,
+            preconditioner_dtypes=preconditioner_dtypes,
         )
 
         if params is None:
@@ -132,6 +138,8 @@ class SIRFShampoo(Optimizer):
         # pre-conditioner. This simplifies book-keeping when updating the
         # pre-conditioner and taking a step.
         self._one_param_group_per_preconditioner()
+        # convert structure and dtype arguments into tuples
+        self._standardize_structures_and_preconditioner_dtypes()
         self._verify_hyperparameters()
 
         # The pre-conditioner for one group is a list of matrices (the Kronecker
@@ -181,7 +189,7 @@ class SIRFShampoo(Optimizer):
             ]
             print(
                 f"Group {i}\n\t- Parameter names: {param_names}"
-                f"\n\t-Pre-conditioner: {prec_desc}\n\t- Other: {other}"
+                f"\n\t- Pre-conditioner: {prec_desc}\n\t- Other: {other}"
             )
 
     def _get_current_batch_size(self) -> int:
@@ -321,34 +329,34 @@ class SIRFShampoo(Optimizer):
 
         Raises:
             ValueError: If the method is not supported.
-            ValueError: If number of structures does not match number of factors.
+            RuntimeError: If the number of structures, data types, and dimensions do not
+                match.
         """
         preconditioners = []
         for group in self.param_groups:
+            classes = [
+                self.SUPPORTED_STRUCTURES[struct] for struct in group["structures"]
+            ]
+
             params = group["params"]
-            (dtype,) = {p.dtype for p in params}
-            (device,) = {p.device for p in params}
-            kwargs = {"dtype": dtype, "device": device}
+            (dev,) = {p.device for p in params}
+            dtypes = group["preconditioner_dtypes"]
+            kwargs = [{"dtype": dt, "device": dev} for dt in dtypes]
+
             dims = TensorCombiner.group(params).shape
 
-            # obtain constructors of structured matrices
-            structures = group["structures"]
-            if isinstance(structures, str):
-                structures = len(dims) * [structures]
-            elif len(structures) != len(dims):
-                raise ValueError(
-                    f"Number of structures ({len(structures)}) must match number"
-                    + f"of Kronecker factors ({len(dims)})."
+            if not len(dtypes) == len(classes) == len(dims):
+                raise RuntimeError(
+                    "Number of structures, data dtypes, and dimensions do not match."
                 )
-            classes = [self.SUPPORTED_STRUCTURES[struct] for struct in structures]
 
             if method == "identity":
                 preconditioners.append(
-                    [cls.eye(d, **kwargs) for cls, d in zip(classes, dims)]
+                    [cls.eye(d, **kw) for cls, d, kw in zip(classes, dims, kwargs)]
                 )
             elif method == "zero":
                 preconditioners.append(
-                    [cls.zeros(d, **kwargs) for cls, d in zip(classes, dims)]
+                    [cls.zeros(d, **kw) for cls, d, kw in zip(classes, dims, kwargs)]
                 )
             else:
                 raise ValueError(
@@ -414,6 +422,8 @@ class SIRFShampoo(Optimizer):
             raise NotImplementedError("Only pre-conditioners with 2 factors supported.")
         C, K = prec
         m_C, m_K = prec_mom
+        dt_C, dt_K = group["preconditioner_dtypes"]
+
         G = TensorCombiner.group([p.grad for p in group["params"]])
         dim_C, dim_K = G.shape
 
@@ -427,7 +437,9 @@ class SIRFShampoo(Optimizer):
         C_scaled = C * (1 / sqrt(dim_C))
         K_scaled = K * (1 / sqrt(dim_K))
 
-        CT_G_K = C_scaled.rmatmat(K_scaled.rmatmat(G.T).T)  # shared between updates
+        CT_G_K = C_scaled.rmatmat(
+            K_scaled.rmatmat(G.T.to(dt_K)).T.to(dt_C)
+        )  # shared between updates, has data type of C
         CT_C = C_scaled.from_inner()
         KT_K = K_scaled.from_inner()
 
@@ -439,6 +451,7 @@ class SIRFShampoo(Optimizer):
         m_C.mul_(alpha2)
         m_C.add_(m_C_step, alpha=(1 - alpha2) * dim_C / 2)
 
+        CT_G_K = CT_G_K.to(dt_K)
         m_K_step = K.from_dense(CT_G_K.T @ CT_G_K).mul_(B)
         m_K_step.add_(KT_K, alpha=lam * CT_C.average_trace() * dim_C)
         m_K_step.diag_add_(-gamma / dim_K)
@@ -475,10 +488,55 @@ class SIRFShampoo(Optimizer):
             raise NotImplementedError("Only pre-conditioners with 2 factors supported.")
 
         C, K = prec
+        dt_C, dt_K = group["preconditioner_dtypes"]
         G = TensorCombiner.group([p.grad for p in params])
         # multiply from the left with C @ C.T
-        G = C @ C.rmatmat(G)
+        G = C @ C.rmatmat(G.to(dt_C))
         # multiply from the right with K.T @ K
-        G = (K.rmatmat(K @ G.T)).T
+        G = (K.rmatmat(K @ G.T.to(dt_K))).T
 
         return TensorCombiner.ungroup(G, [p.shape for p in params])
+
+    def _standardize_structures_and_preconditioner_dtypes(self):
+        """Standardize the values for structures and data types in parameter groups.
+
+        Rewrites the `'structures'` and `'preconditioner_dtypes'` entries to be tuples,
+        each entry specifying the properties of a Kronecker factor.
+
+        Raises:
+            ValueError: If the preconditioner data types were specified incorrectly.
+            ValueError: If the structures were specified incorrectly.
+        """
+        for group in self.param_groups:
+            structures = group["structures"]
+            dtypes = group["preconditioner_dtypes"]
+            params = group["params"]
+
+            # number of Kronecker factors
+            N = TensorCombiner.group(params).ndim
+
+            # overwrite structures in parameter group
+            if isinstance(structures, str):
+                group["structures"] = N * (structures,)
+            elif (
+                not isinstance(structures, tuple)
+                or len(structures) != N
+                or any(not isinstance(s, str) for s in structures)
+            ):
+                raise ValueError(f"Invalid structures in a group. Got {structures}.")
+
+            # detect data types and overwrite entry in parameter groups
+            (default_dt,) = {p.dtype for p in params}
+            if dtypes is None or isinstance(dtypes, dtype):
+                dtypes = N * (dtypes,)
+            elif (
+                not isinstance(dtypes, tuple)
+                or len(dtypes) != N
+                or any(dt is not None and not isinstance(dt, dtype) for dt in dtypes)
+            ):
+                raise ValueError(
+                    f"Invalid preconditioner_dtype in a group. Got {dtypes}."
+                )
+            group["preconditioner_dtypes"] = tuple(
+                default_dt if dt is None else dt for dt in dtypes
+            )
