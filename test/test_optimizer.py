@@ -1,10 +1,10 @@
-"""Test `sirfshampoo.optimizer` module."""
+" 4a" "Test `sirfshampoo.optimizer` module." ""
 
 from collections import OrderedDict
-from typing import Callable, Union
+from typing import Callable, Optional, Tuple, Union
 
 from pytest import mark, raises
-from torch import manual_seed, rand
+from torch import bfloat16, dtype, float16, float32, manual_seed, rand
 from torch.nn import Linear, MSELoss, ReLU, Sequential, Sigmoid
 from torch.optim.lr_scheduler import StepLR
 
@@ -56,15 +56,31 @@ def test__one_param_group_per_preconditioner():
         "T": 1,
         "lam": 0.001,
         "structures": "dense",
+        "preconditioner_dtypes": None,
     }
 
     # one parameter group
     optimizer = SIRFShampoo(model, verbose_init=True)
     assert len(optimizer.param_groups) == 3
     assert optimizer.param_groups == [
-        {"params": [model.linear1.weight, model.linear1.bias], **defaults},
-        {"params": [model.inner.linear.weight], **defaults},
-        {"params": [model.linear2.weight, model.linear2.bias], **defaults},
+        {
+            "params": [model.linear1.weight, model.linear1.bias],
+            **defaults,
+            "preconditioner_dtypes": (float32, float32),
+            "structures": ("dense", "dense"),
+        },
+        {
+            "params": [model.inner.linear.weight],
+            **defaults,
+            "preconditioner_dtypes": (float32, float32),
+            "structures": ("dense", "dense"),
+        },
+        {
+            "params": [model.linear2.weight, model.linear2.bias],
+            **defaults,
+            "preconditioner_dtypes": (float32, float32),
+            "structures": ("dense", "dense"),
+        },
     ]
 
     # two parameter groups (sub-set of parameters), one with modified defaults
@@ -82,10 +98,23 @@ def test__one_param_group_per_preconditioner():
         {
             "params": [model.linear1.weight, model.linear1.bias],
             **defaults,
+            "preconditioner_dtypes": (float32, float32),
+            "structures": ("dense", "dense"),
             "alpha1": 0.5,
         },
-        {"params": [model.inner.linear.weight], **defaults},
-        {"params": [model.linear2.bias], **defaults, "alpha1": 0.5},
+        {
+            "params": [model.inner.linear.weight],
+            **defaults,
+            "preconditioner_dtypes": (float32, float32),
+            "structures": ("dense", "dense"),
+        },
+        {
+            "params": [model.linear2.bias],
+            **defaults,
+            "alpha1": 0.5,
+            "preconditioner_dtypes": (float32,),
+            "structures": ("dense",),
+        },
     ]
 
     # two parameter groups (sub-set of parameters), one with modified defaults,
@@ -102,10 +131,51 @@ def test__one_param_group_per_preconditioner():
     optimizer = SIRFShampoo(model, params=param_groups, verbose_init=True)
     assert len(optimizer.param_groups) == 4
     assert optimizer.param_groups == [
-        {"params": [model.linear1.weight], **defaults, "alpha1": 0.5},
-        {"params": [model.linear1.bias], **defaults},
-        {"params": [model.inner.linear.weight], **defaults},
-        {"params": [model.linear2.bias], **defaults, "alpha1": 0.5},
+        {
+            "params": [model.linear1.weight],
+            **defaults,
+            "alpha1": 0.5,
+            "preconditioner_dtypes": (float32, float32),
+            "structures": ("dense", "dense"),
+        },
+        {
+            "params": [model.linear1.bias],
+            **defaults,
+            "structures": ("dense",),
+            "preconditioner_dtypes": (float32,),
+        },
+        {
+            "params": [model.inner.linear.weight],
+            **defaults,
+            "preconditioner_dtypes": (float32, float32),
+            "structures": ("dense", "dense"),
+        },
+        {
+            "params": [model.linear2.bias],
+            **defaults,
+            "alpha1": 0.5,
+            "structures": ("dense",),
+            "preconditioner_dtypes": (float32,),
+        },
+    ]
+
+    # different data types for pre-conditioner
+    param_groups = [
+        {
+            "params": [model.linear1.weight],
+            **defaults,
+            "preconditioner_dtypes": (float16, bfloat16),
+        },
+    ]
+    optimizer = SIRFShampoo(model, params=param_groups, verbose_init=True)
+    assert len(optimizer.param_groups) == 1
+    assert optimizer.param_groups == [
+        {
+            "params": [model.linear1.weight],
+            **defaults,
+            "preconditioner_dtypes": (float16, bfloat16),
+            "structures": ("dense", "dense"),
+        },
     ]
 
 
@@ -148,15 +218,36 @@ T_CASE_IDS = ["every", "custom"]
 SCHEDULE_LRS = [False, True]
 SCHEDULE_LR_IDS = ["constant-lr", "scheduled-lr"]
 
+PRECONDITIONER_DTYPES = [
+    None,
+    (float32, bfloat16),
+    (bfloat16, float32),
+    (float16, bfloat16),
+]
+PRECONDITIONER_DTYPE_IDS = [
+    "default-dtypes",
+    "float32-bfloat16",
+    "bfloat16-float32",
+    "float16-bfloat16",
+]
 
+
+@mark.parametrize(
+    "preconditioner_dtypes", PRECONDITIONER_DTYPES, ids=PRECONDITIONER_DTYPE_IDS
+)
 @mark.parametrize("schedule_lr", SCHEDULE_LRS, ids=SCHEDULE_LR_IDS)
 @mark.parametrize("T", T_CASES, ids=T_CASE_IDS)
-def test_step_integration(T: Union[int, Callable[[int], int]], schedule_lr: bool):
+def test_step_integration(
+    T: Union[int, Callable[[int], bool]],
+    schedule_lr: bool,
+    preconditioner_dtypes: Optional[Union[dtype, Tuple[dtype, ...]]],
+):
     """Check the optimizer is able to take a couple of steps without erroring.
 
     Args:
         T: Pre-conditioner update schedule.
         schedule_lr: Whether to use a learning rate scheduler.
+        preconditioner_dtypes: Pre-conditioner data types.
     """
     manual_seed(0)
     batch_size = 6
@@ -165,13 +256,17 @@ def test_step_integration(T: Union[int, Callable[[int], int]], schedule_lr: bool
     loss_func = MSELoss()
     X, y = rand(batch_size, D_in), rand(batch_size, D_out)
 
-    optimizer = SIRFShampoo(model, lr=0.1, kappa=0.001, T=T)
+    optimizer = SIRFShampoo(
+        model, lr=0.1, kappa=0.001, T=T, preconditioner_dtypes=preconditioner_dtypes
+    )
     num_steps = 5
     if schedule_lr:
         scheduler = StepLR(optimizer, num_steps // 2, gamma=0.9)
 
     losses = []
     for step in range(num_steps):
+        verify_preconditioner_dtypes(optimizer)
+        verify_preconditioner_structures(optimizer)
         optimizer.zero_grad()
         loss = loss_func(model(X), y)
         loss.backward()
@@ -182,6 +277,39 @@ def test_step_integration(T: Union[int, Callable[[int], int]], schedule_lr: bool
             scheduler.step()
 
     assert losses[0] > losses[-1]
+
+
+def verify_preconditioner_dtypes(optimizer: SIRFShampoo):
+    """Check that the preconditioner dtypes are as expected."""
+    for group, preconditioner, preconditioner_momenta in zip(
+        optimizer.param_groups,
+        optimizer.preconditioner,
+        optimizer.preconditioner_momenta,
+    ):
+        (default_dt,) = {p.dtype for p in group["params"]}
+        dtypes = [
+            default_dt if dt is None else dt for dt in group["preconditioner_dtypes"]
+        ]
+        assert len(preconditioner) == len(preconditioner_momenta) == len(dtypes)
+        for prec, mom, dt in zip(preconditioner, preconditioner_momenta, dtypes):
+            (prec_dt,) = {t.dtype for _, t in prec.named_tensors()}
+            assert prec_dt == dt
+            (mom_dt,) = {t.dtype for _, t in mom.named_tensors()}
+            assert mom_dt == dt
+
+
+def verify_preconditioner_structures(optimizer: SIRFShampoo):
+    """Check that the preconditioner structures are as expected."""
+    for group, preconditioner, preconditioner_momenta in zip(
+        optimizer.param_groups,
+        optimizer.preconditioner,
+        optimizer.preconditioner_momenta,
+    ):
+        structures = group["structures"]
+        assert len(preconditioner) == len(preconditioner_momenta) == len(structures)
+        for prec, mom, s in zip(preconditioner, preconditioner_momenta, structures):
+            assert isinstance(prec, optimizer.SUPPORTED_STRUCTURES[s])
+            assert isinstance(mom, optimizer.SUPPORTED_STRUCTURES[s])
 
 
 def test__verify_hyperparameters():
