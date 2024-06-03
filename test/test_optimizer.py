@@ -1,4 +1,4 @@
-"""Test `sirfshampoo.optimizer` module." ""
+"""Test `sirfshampoo.optimizer` module."""
 
 from collections import OrderedDict
 from typing import Callable, Optional, Tuple, Union
