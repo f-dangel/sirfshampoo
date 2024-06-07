@@ -1,3 +1,10 @@
+# Installation
+
+- Latest version from GitHub `main` branch:
+  ```bash
+  pip install git+https://github.com/f-dangel/sirfshampo.git@main
+  ```
+
 # Developer guide
 
 This guide describes principles and workflows for developers.

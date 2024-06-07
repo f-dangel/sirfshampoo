@@ -55,31 +55,41 @@ def test__one_param_group_per_preconditioner():
         "kappa": 0.0,
         "T": 1,
         "lam": 0.001,
-        "structures": "dense",
-        "preconditioner_dtypes": None,
     }
 
     # one parameter group
     optimizer = SIRFShampoo(model, verbose_init=True)
-    assert len(optimizer.param_groups) == 3
+    assert len(optimizer.param_groups) == len(list(model.parameters()))
     assert optimizer.param_groups == [
         {
-            "params": [model.linear1.weight, model.linear1.bias],
+            "params": [model.linear1.weight],
             **defaults,
-            "preconditioner_dtypes": (float32, float32),
-            "structures": ("dense", "dense"),
+            "preconditioner_dtypes": 2 * (float32,),
+            "structures": 2 * ("dense",),
+        },
+        {
+            "params": [model.linear1.bias],
+            **defaults,
+            "preconditioner_dtypes": (float32,),
+            "structures": ("dense",),
         },
         {
             "params": [model.inner.linear.weight],
             **defaults,
-            "preconditioner_dtypes": (float32, float32),
-            "structures": ("dense", "dense"),
+            "preconditioner_dtypes": 2 * (float32,),
+            "structures": 2 * ("dense",),
         },
         {
-            "params": [model.linear2.weight, model.linear2.bias],
+            "params": [model.linear2.weight],
             **defaults,
-            "preconditioner_dtypes": (float32, float32),
-            "structures": ("dense", "dense"),
+            "preconditioner_dtypes": 2 * (float32,),
+            "structures": 2 * ("dense",),
+        },
+        {
+            "params": [model.linear2.bias],
+            **defaults,
+            "preconditioner_dtypes": (float32,),
+            "structures": ("dense",),
         },
     ]
 
@@ -93,20 +103,27 @@ def test__one_param_group_per_preconditioner():
         {"params": [model.inner.linear.weight]},
     ]
     optimizer = SIRFShampoo(model, params=param_groups, verbose_init=True)
-    assert len(optimizer.param_groups) == 3
+    assert len(optimizer.param_groups) == 4
     assert optimizer.param_groups == [
         {
-            "params": [model.linear1.weight, model.linear1.bias],
+            "params": [model.linear1.weight],
             **defaults,
-            "preconditioner_dtypes": (float32, float32),
-            "structures": ("dense", "dense"),
+            "preconditioner_dtypes": 2 * (float32,),
+            "structures": 2 * ("dense",),
+            "alpha1": 0.5,
+        },
+        {
+            "params": [model.linear1.bias],
+            **defaults,
+            "preconditioner_dtypes": (float32,),
+            "structures": ("dense",),
             "alpha1": 0.5,
         },
         {
             "params": [model.inner.linear.weight],
             **defaults,
-            "preconditioner_dtypes": (float32, float32),
-            "structures": ("dense", "dense"),
+            "preconditioner_dtypes": 2 * (float32,),
+            "structures": 2 * ("dense",),
         },
         {
             "params": [model.linear2.bias],
@@ -135,8 +152,8 @@ def test__one_param_group_per_preconditioner():
             "params": [model.linear1.weight],
             **defaults,
             "alpha1": 0.5,
-            "preconditioner_dtypes": (float32, float32),
-            "structures": ("dense", "dense"),
+            "preconditioner_dtypes": 2 * (float32,),
+            "structures": 2 * ("dense",),
         },
         {
             "params": [model.linear1.bias],
@@ -147,8 +164,8 @@ def test__one_param_group_per_preconditioner():
         {
             "params": [model.inner.linear.weight],
             **defaults,
-            "preconditioner_dtypes": (float32, float32),
-            "structures": ("dense", "dense"),
+            "preconditioner_dtypes": 2 * (float32,),
+            "structures": 2 * ("dense",),
         },
         {
             "params": [model.linear2.bias],
@@ -164,7 +181,7 @@ def test__one_param_group_per_preconditioner():
         {
             "params": [model.linear1.weight],
             **defaults,
-            "preconditioner_dtypes": (float16, bfloat16),
+            "preconditioner_dtypes": {2: (float16, bfloat16)},
         },
     ]
     optimizer = SIRFShampoo(model, params=param_groups, verbose_init=True)
@@ -174,8 +191,8 @@ def test__one_param_group_per_preconditioner():
             "params": [model.linear1.weight],
             **defaults,
             "preconditioner_dtypes": (float16, bfloat16),
-            "structures": ("dense", "dense"),
-        },
+            "structures": 2 * ("dense",),
+        }
     ]
 
 
@@ -220,15 +237,13 @@ SCHEDULE_LR_IDS = ["constant-lr", "scheduled-lr"]
 
 PRECONDITIONER_DTYPES = [
     None,
-    (float32, bfloat16),
-    (bfloat16, float32),
-    (float16, bfloat16),
+    bfloat16,
+    {1: float32, 2: None},
+    {1: (float32,), 2: (float16, float32)},
+    {1: float16, 2: (float16, bfloat16)},
 ]
 PRECONDITIONER_DTYPE_IDS = [
-    "default-dtypes",
-    "float32-bfloat16",
-    "bfloat16-float32",
-    "float16-bfloat16",
+    f"dtypes={dt}".replace("\n", "") for dt in PRECONDITIONER_DTYPES
 ]
 
 
@@ -340,6 +355,23 @@ def test__verify_hyperparameters():
         SIRFShampoo(model, T=-1)
     with raises(ValueError):
         SIRFShampoo(model, structures="not_a_supported_structure")
-    too_many = ("dense", "dense", "dense")
-    with raises(ValueError):
-        SIRFShampoo(model, structures=too_many)
+
+    # test specification of structures
+    cases = [
+        {1: "dense"},  # incomplete
+        "some_structure",  # unsupported
+        {1: ("dense", "dense", "dense")},  # wrong format
+    ]
+    for case in cases:
+        with raises(ValueError):
+            SIRFShampoo(model, structures=case)
+
+    # test specification of structures
+    cases = [
+        {1: float32},  # incomplete
+        "some_dtype",  # unsupported
+        {1: float32, 2: (float32, float32, float32)},  # wrong format
+    ]
+    for case in cases:
+        with raises(ValueError):
+            SIRFShampoo(model, preconditioner_dtypes=case)
