@@ -100,7 +100,7 @@ class SIRFShampoo(Optimizer):
                   preconditioner will use the same structure specified by the string.
                 - If specified as dictionary, each key represents the dimension of a
                   preconditioned tensor and its value specifies the structure as string
-                  or tuple. E.g. `{1: 'dense', 2: ('dense', 'diagonal'), 3: 'diagonal}`
+                  or tuple. E.g. `{1: 'dense', 2: ('dense', 'diagonal'), 3: 'diagonal'}`
                   means that 1d tensors will be predonditioned with a single dense
                   Kronecker factor, 2d tensors with a dense and a diagonal factor, and
                   3d tensors with three diagonal factors.
@@ -513,8 +513,9 @@ class SIRFShampoo(Optimizer):
         G = TensorCombiner.group([p.grad for p in params])
         dtypes = group["preconditioner_dtypes"]
         Ks = self.preconditioner[group_idx]
+        (N,) = {len(Ks), len(dtypes), G.ndim}
 
-        for n, (dt, K) in enumerate(zip(dtypes, Ks)):
+        for n, dt, K in zip(range(N), dtypes, Ks):
             # multiply K Kᵀ onto axis n
             G = tensormatdot(G.to(dt), K, n, transpose=True)
             G = tensormatdot(G, K, n)
