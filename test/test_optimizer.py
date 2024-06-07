@@ -397,11 +397,9 @@ def test_batch_size():
         verify_preconditioner_dtypes(optimizer)
         verify_preconditioner_structures(optimizer)
 
-        batch_loss = 0
-
         # gradient accumulation over micro-batches
+        batch_loss = 0
         for i, (X, y) in enumerate(batches):
-
             loss = micro_batch_scale * loss_func(model(X), y)
             loss.backward()
             batch_loss += loss.item()
