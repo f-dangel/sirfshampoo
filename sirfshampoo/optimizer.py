@@ -160,7 +160,8 @@ class SIRFShampoo(Optimizer):
         # pre-conditioner and taking a step.
         self._one_param_group_per_preconditioner()
         # convert structure and dtype arguments into tuples
-        self._standardize_structures_and_preconditioner_dtypes()
+        self._standardize_structures()
+        self._standardize_preconditioner_dtypes()
         self._verify_hyperparameters()
 
         # The pre-conditioner for one group is a list of matrices (the Kronecker
@@ -522,19 +523,17 @@ class SIRFShampoo(Optimizer):
 
         return TensorCombiner.ungroup(G, [p.shape for p in params])
 
-    def _standardize_structures_and_preconditioner_dtypes(self):
-        """Standardize the values for structures and data types in parameter groups.
+    def _standardize_structures(self):
+        """Standardize the values for structures in parameter groups.
 
-        Rewrites the `'structures'` and `'preconditioner_dtypes'` entries to be tuples,
-        each entry specifying the properties of a Kronecker factor.
+        Rewrites the `'structures'` entries to be tuples, each entry specifying the
+        structures of a Kronecker factor.
 
         Raises:
-            ValueError: If the preconditioner data types were specified incorrectly.
             ValueError: If the structures were specified incorrectly.
         """
         for group in self.param_groups:
             structures = group["structures"]
-            dtypes = group["preconditioner_dtypes"]
             params = group["params"]
 
             # number of Kronecker factors
@@ -560,6 +559,22 @@ class SIRFShampoo(Optimizer):
 
             group["structures"] = structures
 
+    def _standardize_preconditioner_dtypes(self):
+        """Standardize the values for preconditioner data types in parameter groups.
+
+        Rewrites the `'preconditioner_dtypes'` entries to be tuples, each entry
+        specifying the data type of a Kronecker factor.
+
+        Raises:
+            ValueError: If the data types were specified incorrectly.
+        """
+        for group in self.param_groups:
+            dtypes = group["preconditioner_dtypes"]
+            params = group["params"]
+
+            # number of Kronecker factors
+            N = TensorCombiner.group(params).ndim
+
             # detect data types and overwrite entry in parameter groups
             if isinstance(dtypes, dtype) or dtypes is None:
                 dtypes = N * (dtypes,)
@@ -581,4 +596,5 @@ class SIRFShampoo(Optimizer):
             if None in dtypes:
                 (default_dt,) = {p.dtype for p in params}
                 dtypes = tuple(default_dt if dt is None else dt for dt in dtypes)
+
             group["preconditioner_dtypes"] = dtypes
