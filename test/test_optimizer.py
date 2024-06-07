@@ -384,7 +384,7 @@ def test_batch_size_accumulation():
     model(zeros(some_B, D_in))
     assert optimizer.batch_size == some_B
 
-    # forward passes with the model in evaluation mode does not increase the counter
+    # forward passes with the model in evaluation mode do not increase the counter
     some_other_B = 8
     model.eval()
     model(zeros(some_other_B, D_in))
