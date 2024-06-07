@@ -25,7 +25,9 @@ class TensorCombiner:
         """
         # one tensor only
         if len(tensors) == 1:
-            return tensors[0]
+            # squeeze dimensions of size 1, treat scalars as vectors
+            squeezed = tensors[0].squeeze()
+            return squeezed.unsqueeze(0) if squeezed.ndim == 0 else squeezed
 
         # combining a weight and bias
         if len(tensors) == 2:
@@ -66,8 +68,8 @@ class TensorCombiner:
             NotImplementedError: If the supplied tensor shapes cannot be split.
         """
         # one tensor only
-        if len(tensor_shapes) == 1 and tensor_shapes[0] == grouped_tensor.shape:
-            return [grouped_tensor]
+        if len(tensor_shapes) == 1:
+            return [grouped_tensor.reshape(tensor_shapes[0])]
 
         # combining a weight and bias
         if len(tensor_shapes) == 2:

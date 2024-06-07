@@ -1,13 +1,16 @@
 """Test combining and splitting tensors."""
 
+from test.utils import DEVICE_IDS, DEVICES
 from typing import List, Tuple
 
 from pytest import mark, raises
-from torch import Size, allclose, manual_seed, rand
+from torch import Size, allclose, device, manual_seed, rand
 
 from sirfshampoo.combiner import TensorCombiner
 
 GROUPING_SHAPES = [
+    [(2,)],  # one 1d tensor
+    [(2, 1)],  # 2d tensor with trivial axis
     [(2, 3, 4)],  # one tensor only
     [(2, 3, 4), (2, 3, 4), (2, 3, 4)],  # multiple tensors of same shape
     [(4, 3), (4,)],  # weight and bias of a linear layer
@@ -23,15 +26,16 @@ UNSUPPORTED_GROUPING_SHAPES = [
 ]
 
 
-def _check_group_then_ungroup(shapes: List[Tuple[int, ...]]):
+def _check_group_then_ungroup(shapes: List[Tuple[int, ...]], dev: device):
     """Generate random tensors and try to group and ungroup them.
 
     Verify that `ungroup(group) = identity`.
 
     Args:
         shapes: Shapes of the tensors to generate.
+        dev: The device to run the test on.
     """
-    tensors = [rand(shape) for shape in shapes]
+    tensors = [rand(shape, device=dev) for shape in shapes]
     grouped = TensorCombiner.group(tensors)
     # TODO We could relax this condition in cases where one wants to
     # pad smaller tensors so they can be stacked with other tensors,
@@ -44,27 +48,33 @@ def _check_group_then_ungroup(shapes: List[Tuple[int, ...]]):
     assert all(allclose(t1, t2) for t1, t2 in zip(tensors, ungrouped))
 
 
+@mark.parametrize("dev", DEVICES, ids=DEVICE_IDS)
 @mark.parametrize("shapes", GROUPING_SHAPES, ids=str)
-def test_TensorCombiner_group_then_ungroup(shapes: List[Tuple[int, ...]]):
+def test_TensorCombiner_group_then_ungroup(shapes: List[Tuple[int, ...]], dev: device):
     """Test `group` and `ungroup` methods of `TensorCombiner`.
 
     Args:
         shapes: Shapes of the tensors to generate and combine.
+        dev: The device to run the test on.
     """
     manual_seed(0)
-    _check_group_then_ungroup(shapes)
+    _check_group_then_ungroup(shapes, dev)
 
 
+@mark.parametrize("dev", DEVICES, ids=DEVICE_IDS)
 @mark.parametrize("shapes", UNSUPPORTED_GROUPING_SHAPES, ids=str)
-def test_TensorCombiner_unsupported_group_then_ungroup(shapes: List[Tuple[int, ...]]):
+def test_TensorCombiner_unsupported_group_then_ungroup(
+    shapes: List[Tuple[int, ...]], dev: device
+):
     """Test unsupported cases of `group` and `ungroup`.
 
     Args:
         shapes: Shapes of the tensors to generate and combine.
+        dev: The device to run the test on.
     """
     manual_seed(0)
     with raises(NotImplementedError):
-        _check_group_then_ungroup(shapes)
+        _check_group_then_ungroup(shapes, dev)
 
 
 # first entry is shape of grouped tensor, second entry is list of shapes of ungrouped
@@ -112,8 +122,9 @@ UNSUPPORTED_UNGROUPING_CASES = [
 ]
 
 
+@mark.parametrize("dev", DEVICES, ids=DEVICE_IDS)
 def _check_ungroup_then_group(
-    grouped_shape: Tuple[int, ...], ungrouped_shapes=List[Tuple[int, ...]]
+    grouped_shape: Tuple[int, ...], ungrouped_shapes: List[Tuple[int, ...]], dev: device
 ):
     """Generate a random tensor and try to ungroup group it.
 
@@ -122,10 +133,11 @@ def _check_ungroup_then_group(
     Args:
         grouped_shape: Shape of the grouped tensor.
         ungrouped_shapes: Shapes of the tensors to ungroup.
+        dev: The device to run the test on.
     """
     # `ungroup` requires the shapes to be of type `Size`
     ungrouped_shapes = [Size(shape) for shape in ungrouped_shapes]
-    tensor = rand(grouped_shape)
+    tensor = rand(grouped_shape, device=dev)
     ungrouped = TensorCombiner.ungroup(tensor, ungrouped_shapes)
     assert len(ungrouped) == len(ungrouped_shapes)
     assert all(t.shape == s for t, s in zip(ungrouped, ungrouped_shapes))
@@ -137,28 +149,48 @@ def _check_ungroup_then_group(
     assert allclose(tensor, grouped)
 
 
+@mark.parametrize("dev", DEVICES, ids=DEVICE_IDS)
 @mark.parametrize("case", UNGROUPING_CASES, ids=str)
 def test_TensorCombiner_ungroup_then_group(
-    case: Tuple[Tuple[int, ...], List[Tuple[int, ...]]]
+    case: Tuple[Tuple[int, ...], List[Tuple[int, ...]]], dev: device
 ):
     """Test `ungroup` and `group` methods of `TensorCombiner`.
 
     Args:
         case: Shape of the grouped tensor and shapes of the ungrouped tensors.
+        dev: The device to run the test on.
     """
     manual_seed(0)
-    _check_ungroup_then_group(*case)
+    _check_ungroup_then_group(*case, dev)
 
 
+@mark.parametrize("dev", DEVICES, ids=DEVICE_IDS)
 @mark.parametrize("case", UNSUPPORTED_UNGROUPING_CASES, ids=str)
 def test_TensorCombiner_unsupported_ungroup_then_group(
-    case: Tuple[Tuple[int, ...], List[Tuple[int, ...]]]
+    case: Tuple[Tuple[int, ...], List[Tuple[int, ...]]], dev: device
 ):
     """Test unsupported cases of `ungroup` and `group`.
 
     Args:
         case: Shape of the grouped tensor and shapes of the ungrouped tensors.
+        dev: The device to run the test on.
     """
     manual_seed(0)
     with raises(NotImplementedError):
-        _check_ungroup_then_group(*case)
+        _check_ungroup_then_group(*case, dev)
+
+
+@mark.parametrize("dev", DEVICES, ids=DEVICE_IDS)
+def test_TensorCombiner_group_trivial_axes(dev: device):
+    """Test combiner when it encounters tensors with dimensions of size 1.
+
+    Args:
+        dev: Device to run the test on.
+    """
+    manual_seed(0)
+    t = rand(2, 1, 3, 1, device=dev)
+    assert TensorCombiner().group([t]).shape == (2, 3)
+
+    t = rand(1, device=dev).squeeze()
+    assert t.ndim == 0
+    assert TensorCombiner().group([t]).shape == (1,)
