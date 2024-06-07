@@ -25,7 +25,7 @@ class TensorCombiner:
         """
         # one tensor only
         if len(tensors) == 1:
-            # squeeze dimensions of size 1, treat scalars as tensors
+            # squeeze dimensions of size 1, treat scalars as vectors
             squeezed = tensors[0].squeeze()
             return squeezed.unsqueeze(0) if squeezed.ndim == 0 else squeezed
 
