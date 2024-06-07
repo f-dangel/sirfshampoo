@@ -138,20 +138,29 @@ class SIRFShampoo(Optimizer):
         # batch size detection
         if callable(batch_size):
             # install as module hook that updates the batch size in every forward pass
-            self.batch_size = None
+            self.batch_size_valid = self.global_step
+            self.batch_size = 0
 
             def hook(module: Module, inputs: Tuple[Tensor, ...]):
-                """Forward hook to store the current batch size in the optimizer.
+                """Forward hook to accumulate the batch size in the optimizer.
 
                 Args:
                     module: The module that is called.
                     inputs: The input tensors to the module.
                 """
-                self.batch_size = batch_size(inputs)
+                # batch size is outdated because optimizer has stepped
+                if self.batch_size_valid != self.global_step:
+                    self.batch_size_valid = self.global_step
+                    self.batch_size = 0
+
+                # do not accumulate batch size during evaluation
+                if module.training:
+                    self.batch_size += batch_size(inputs)
 
             self.batch_size_handle = model.register_forward_pre_hook(hook)
         else:
             self.batch_size = batch_size
+            self.batch_size_valid = "always"
             self.batch_size_handle = None
 
         # we rewrite the original parameter groups and create new ones such that each
@@ -213,20 +222,6 @@ class SIRFShampoo(Optimizer):
                 f"Group {i}\n\t- Parameter names: {param_names}"
                 f"\n\t- Pre-conditioner: {prec_desc}\n\t- Other: {other}"
             )
-
-    def _get_current_batch_size(self) -> int:
-        """Get the current batch size.
-
-        Returns:
-            The current batch size.
-
-        Raises:
-            RuntimeError: If the batch size is negative or not an integer.
-        """
-        if isinstance(self.batch_size, int) and self.batch_size > 0:
-            return self.batch_size
-
-        raise RuntimeError(f"Batch size is not a positive integer: {self.batch_size}.")
 
     def _one_param_group_per_preconditioner(self) -> None:
         """Overwrite parameter groups so that a group's params share a pre-conditioner.
@@ -483,7 +478,7 @@ class SIRFShampoo(Optimizer):
         # 2) UPDATE THE KRONECKER FACTORS
         # NOTE `GK`, `KT_K`, and `Tr_KTK` have scalings to improve numerical stability.
         # Therefore, the update reads differently to the version in the paper.
-        B = self._get_current_batch_size()
+        B = self.batch_size
         for n, dt, dim, m_K, K in zip(range(N), dtypes, dims, m_Ks, Ks):
             not_n = list(range(n)) + list(range(n + 1, N))
             GK = GK.to(dt)
