@@ -138,20 +138,29 @@ class SIRFShampoo(Optimizer):
         # batch size detection
         if callable(batch_size):
             # install as module hook that updates the batch size in every forward pass
-            self.batch_size = None
+            self.batch_size_valid = self.global_step
+            self.batch_size = 0
 
             def hook(module: Module, inputs: Tuple[Tensor, ...]):
-                """Forward hook to store the current batch size in the optimizer.
+                """Forward hook to accumulate the batch size in the optimizer.
 
                 Args:
                     module: The module that is called.
                     inputs: The input tensors to the module.
                 """
-                self.batch_size = batch_size(inputs)
+                microbatch_size = batch_size(inputs)
+                # still computing micro-batch gradients, optimizer hasn't stepped yet
+                if self.batch_size_valid == self.global_step:
+                    self.batch_size += microbatch_size
+                # optimizer has stepped, batch size is outdated
+                else:
+                    self.batch_size_valid = self.global_step
+                    self.batch_size = microbatch_size
 
             self.batch_size_handle = model.register_forward_pre_hook(hook)
         else:
             self.batch_size = batch_size
+            self.batch_size_valid = "always"
             self.batch_size_handle = None
 
         # we rewrite the original parameter groups and create new ones such that each

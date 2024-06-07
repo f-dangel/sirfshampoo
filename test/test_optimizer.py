@@ -4,7 +4,7 @@ from collections import OrderedDict
 from typing import Callable, Optional, Tuple, Union
 
 from pytest import mark, raises
-from torch import bfloat16, dtype, float16, float32, manual_seed, rand
+from torch import bfloat16, dtype, float16, float32, manual_seed, rand, zeros
 from torch.nn import Linear, MSELoss, ReLU, Sequential, Sigmoid
 from torch.optim.lr_scheduler import StepLR
 
@@ -375,3 +375,46 @@ def test__verify_hyperparameters():
     for case in cases:
         with raises(ValueError):
             SIRFShampoo(model, preconditioner_dtypes=case)
+
+
+def test_batch_size():
+    """Check batch size accumulation through hooks inside the optimizer."""
+    manual_seed(0)
+    micro_batch_sizes = [6, 6, 6]
+    # scale the micro-batch loss to obtain correct scale of accumulated gradient
+    micro_batch_scale = 1 / 3
+    D_in, D_hidden, D_out = 5, 4, 3
+    model = nested_network(D_in, D_hidden, D_out)
+    loss_func = MSELoss()
+    batches = [(rand(B, D_in), rand(B, D_out)) for B in micro_batch_sizes]
+
+    optimizer = SIRFShampoo(model, lr=0.1, kappa=0.001)
+    num_steps = 5
+
+    losses = []
+    for step in range(num_steps):
+        optimizer.zero_grad()
+        verify_preconditioner_dtypes(optimizer)
+        verify_preconditioner_structures(optimizer)
+
+        batch_loss = 0
+
+        # gradient accumulation over micro-batches
+        for i, (X, y) in enumerate(batches):
+
+            loss = micro_batch_scale * loss_func(model(X), y)
+            loss.backward()
+            batch_loss += loss.item()
+            assert optimizer.batch_size == sum(micro_batch_sizes[: i + 1])
+
+        losses.append(batch_loss)
+
+        print(f"Step {step:03g}, Loss: {losses[-1]:.5f}")
+        optimizer.step()
+
+    assert losses[0] > losses[-1]
+
+    # after .step(), a new forward pass through the model will start a new accumulation
+    some_B = 7
+    model(zeros(some_B, D_in))
+    assert optimizer.batch_size == some_B
