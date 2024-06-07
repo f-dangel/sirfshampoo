@@ -3,7 +3,7 @@
 from test.utils import DEVICE_IDS, DEVICES
 from typing import Type
 
-from pytest import mark
+from pytest import mark, raises
 from singd.structures.base import StructuredMatrix
 from singd.structures.dense import DenseMatrix
 from singd.structures.diagonal import DiagonalMatrix
@@ -33,6 +33,7 @@ def test_tensormatdot(structure: Type[StructuredMatrix], transpose: bool, dev: d
     """
     manual_seed(0)
 
+    # multiplication into a tensor
     T = rand(2, 3, 4, 5, device=dev)
     M_sym = rand(4, 4, device=dev)
     M_sym = M_sym @ M_sym.T
@@ -41,5 +42,21 @@ def test_tensormatdot(structure: Type[StructuredMatrix], transpose: bool, dev: d
     truth = einsum("mk,ijkl->ijml", M.to_dense().T if transpose else M.to_dense(), T)
     dim = 2
     result = tensormatdot(T, M, dim, transpose=transpose)
-
     assert allclose(result, truth)
+
+    # multiplication into a vector
+    T = rand(4, device=dev)
+    M_sym = rand(4, 4, device=dev)
+    M_sym = M_sym @ M_sym.T
+    M = structure.from_dense(M_sym)
+
+    truth = einsum("mk,k->m", M.to_dense().T if transpose else M.to_dense(), T)
+    dim = 0
+    result = tensormatdot(T, M, dim, transpose=transpose)
+    assert allclose(result, truth)
+
+    # invalid value of dim
+    invalid_dims = [1, -1]  # too large, too small
+    for dim in invalid_dims:
+        with raises(ValueError):
+            tensormatdot(T, M, dim, transpose=transpose)

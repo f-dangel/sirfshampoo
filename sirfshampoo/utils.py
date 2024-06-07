@@ -28,14 +28,19 @@ def tensormatdot(
         the matrix multiplication of `tensor` with `matrix` along dimension `dim`.
 
     Raises:
-        ValueError: If `dim` exceeds the dimension of `tensor`.
+        ValueError: If `dim` exceeds the dimension of `tensor` or is negative.
     """
-    if dim >= tensor.ndim:
+    if not 0 <= dim < tensor.ndim:
         raise ValueError(
             f"Dimension {dim} out of bounds for tensor of shape {tensor.shape}."
         )
-    # move axis that is contracted to first position
-    tensor_as_mat = tensor.movedim(dim, 0).flatten(start_dim=1)
+    # interpret vectors as matrices and move axis that is contracted to first position
+    tensor_as_mat = (
+        tensor.unsqueeze(-1)
+        if tensor.ndim == 1
+        else tensor.movedim(dim, 0).flatten(start_dim=1)
+    )
+
     result_as_mat = mat.rmatmat(tensor_as_mat) if transpose else mat @ tensor_as_mat
     shape = (
         Size([result_as_mat.shape[0]]) + tensor.shape[:dim] + tensor.shape[dim + 1 :]
