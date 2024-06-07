@@ -13,8 +13,8 @@ def tensormatdot(
     be a `StructuredMatrix`.
 
     If `tensor` is a matrix, then this function computes `mat @ tensor` for `dim=0`
-    and `tensor @ mat.T` for `dim=1` (if `transpose` is set to `T`, `mat` will be
-    transposed before the multiplication).
+    and `tensor @ mat.T` for `dim=1`. If `transpose` is set to `True`, `mat` will be
+    transposed before the multiplication.
 
     Args:
         tensor: A tensor of shape `[I_1, I_2, ..., I_dim, ..., I_N]`.
