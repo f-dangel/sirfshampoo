@@ -26,6 +26,9 @@ def tensormatdot(
     Returns:
         A tensor of shape `[I_1, I_2, ..., I_dim, ..., I_N]` representing the result of
         the matrix multiplication of `tensor` with `matrix` along dimension `dim`.
+
+    Raises:
+        ValueError: If `dim` exceeds the dimension of `tensor`.
     """
     if dim >= tensor.ndim:
         raise ValueError(
