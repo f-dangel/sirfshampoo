@@ -196,39 +196,6 @@ def test__one_param_group_per_preconditioner():
     ]
 
 
-def test_batch_size():
-    """Test batch size detection of the optimizer."""
-    manual_seed(0)
-    D_in, D_hidden, D_out = 5, 4, 3
-    batch_sizes = [6, 7, 8]
-
-    # detection through forward hook
-    model = nested_network(D_in, D_hidden, D_out)
-    optimizer = SIRFShampoo(model)
-
-    # batch size is not an integer before a forward pass
-    assert optimizer.batch_size is None
-    with raises(RuntimeError):
-        optimizer._get_current_batch_size()
-
-    for batch_size in batch_sizes:
-        X = rand(batch_size, D_in)
-        model(X)
-        assert optimizer._get_current_batch_size() == batch_size
-
-    # specifying an integer
-    model = nested_network(D_in, D_hidden, D_out)
-    const_batch_size = 9
-    optimizer = SIRFShampoo(model, batch_size=const_batch_size)
-    assert optimizer._get_current_batch_size() == const_batch_size
-
-    # forward passes do not change the batch size
-    for batch_size in batch_sizes:
-        X = rand(batch_size, D_in)
-        model(X)
-        assert optimizer._get_current_batch_size() == const_batch_size
-
-
 T_CASES = [1, lambda step: step in [0, 3]]
 T_CASE_IDS = ["every", "custom"]
 
@@ -415,4 +382,10 @@ def test_batch_size_accumulation():
     # after .step(), a new forward pass through the model will start a new accumulation
     some_B = 7
     model(zeros(some_B, D_in))
+    assert optimizer.batch_size == some_B
+
+    # forward passes with the model in evaluation mode does not increase the counter
+    some_other_B = 8
+    model.eval()
+    model(zeros(some_other_B, D_in))
     assert optimizer.batch_size == some_B
