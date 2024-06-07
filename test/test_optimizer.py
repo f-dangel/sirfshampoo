@@ -377,7 +377,7 @@ def test__verify_hyperparameters():
             SIRFShampoo(model, preconditioner_dtypes=case)
 
 
-def test_batch_size():
+def test_batch_size_accumulation():
     """Check batch size accumulation through hooks inside the optimizer."""
     manual_seed(0)
     micro_batch_sizes = [6, 6, 6]
