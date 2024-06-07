@@ -148,14 +148,12 @@ class SIRFShampoo(Optimizer):
                     module: The module that is called.
                     inputs: The input tensors to the module.
                 """
-                microbatch_size = batch_size(inputs)
-                # still computing micro-batch gradients, optimizer hasn't stepped yet
-                if self.batch_size_valid == self.global_step:
-                    self.batch_size += microbatch_size
-                # optimizer has stepped, batch size is outdated
-                else:
+                # batch size is outdated because optimizer has stepped
+                if self.batch_size_valid != self.global_step:
                     self.batch_size_valid = self.global_step
-                    self.batch_size = microbatch_size
+                    self.batch_size = 0
+
+                self.batch_size += batch_size(inputs)
 
             self.batch_size_handle = model.register_forward_pre_hook(hook)
         else:
