@@ -426,7 +426,7 @@ class SIRFShampoo(Optimizer):
             # (i) multiplication onto G, (ii) computing its self-outer product KᵀK,
             # and (iii) its trace Tr(KᵀK)
             K_scaled = K * (1 / sqrt(dim))
-            GK = tensormatdot(GK, K_scaled, n)
+            GK = tensormatdot(GK, K_scaled, n, transpose=True)
             KTK = K_scaled.from_inner()
             KTKs.append(KTK)
             # NOTE Deliberately convert to python float here to simplify computing the
