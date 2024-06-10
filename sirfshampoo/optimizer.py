@@ -487,7 +487,7 @@ class SIRFShampoo(Optimizer):
 
             # Update Riemannian momentum on K_n
             m_K.mul_(alpha2)
-            m_K.add_(m_K_step, alpha=(1 - alpha2) / 2)
+            m_K.add_(m_K_step, alpha=1 - alpha2)
 
             # update K_n (first-order truncation of matrix exponential)
             K.add_(m_K, alpha=-beta2 / K.frobenius_norm().clamp(min=1.0))
