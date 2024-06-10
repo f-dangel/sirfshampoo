@@ -224,58 +224,19 @@ class SIRFShampoo(Optimizer):
             )
 
     def _one_param_group_per_preconditioner(self) -> None:
-        """Overwrite parameter groups so that a group's params share a pre-conditioner.
-
-        Raises:
-            ValueError: If the re-arranging process lost parameters.
-        """
-        all_params = sum((group["params"] for group in self.param_groups), [])
-        all_ids = {p.data_ptr() for p in all_params}
-
-        # find all layers that contain trainable parameters
-        layers = [
-            layer
-            for layer in self.model.modules()
-            if not list(layer.children())
-            and list(layer.parameters())
-            and any(
-                p.requires_grad and p.data_ptr() in all_ids for p in layer.parameters()
-            )
-        ]
+        """Overwrite param groups so that one group shares a pre-conditioner."""
+        params = sum((group["params"] for group in self.param_groups), [])
 
         # create list entries where each entry lists parameters that are treated jointly
-        treat_jointly = []
-        processed_ids = set()
+        # treat each parameter with an independent pre-conditioner
+        treat_jointly = [[p] for p in params]
+
+        # create new parameter groups, one per pre-conditioner
         param_to_group = {
             p.data_ptr(): i
             for i, group in enumerate(self.param_groups)
             for p in group["params"]
         }
-
-        for layer in layers:
-            params = [
-                p
-                for p in layer.parameters()
-                if p.requires_grad and p.data_ptr() in all_ids
-            ]
-            # treat each parameter with an independent pre-conditioner
-            for p in params:
-                treat_jointly.append([p])
-                processed_ids.add(p.data_ptr())
-
-        if processed_ids != all_ids:
-            all_names = {
-                n for n, p in self.model.named_parameters() if p.data_ptr() in all_ids
-            }
-            processed_names = {
-                n
-                for n, p in self.model.named_parameters()
-                if p.data_ptr() in processed_ids
-            }
-            lost = all_names - processed_names
-            raise ValueError(f"Parameter group rewriting lost parameters {lost}.")
-
-        # create new parameter groups, one per pre-conditioner
         new_param_groups = []
         for params in treat_jointly:
             old_group = self.param_groups[param_to_group[params[0].data_ptr()]]

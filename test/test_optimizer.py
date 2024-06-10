@@ -437,6 +437,4 @@ def test_one_param_group_per_preconditioner_params_outside_layers():
     """
     D_in, D_hidden, D_out = 5, 4, 3
     model = ParamsOutsideLayers(D_in, D_hidden, D_out)
-
-    with raises(ValueError):
-        SIRFShampoo(model, verbose_init=True)
+    SIRFShampoo(model, verbose_init=True)
