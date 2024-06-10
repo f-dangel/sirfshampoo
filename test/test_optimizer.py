@@ -257,6 +257,7 @@ def test_step_integration(
         optimizer.step()
         if schedule_lr:
             scheduler.step()
+        # raise Exception
 
     assert losses[0] > losses[-1]
 
