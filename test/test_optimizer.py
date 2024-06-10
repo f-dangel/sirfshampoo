@@ -4,8 +4,8 @@ from collections import OrderedDict
 from typing import Callable, Optional, Tuple, Union
 
 from pytest import mark, raises
-from torch import bfloat16, dtype, float16, float32, manual_seed, rand, zeros
-from torch.nn import Linear, MSELoss, ReLU, Sequential, Sigmoid
+from torch import Tensor, bfloat16, dtype, float16, float32, manual_seed, rand, zeros
+from torch.nn import Linear, Module, MSELoss, Parameter, ReLU, Sequential, Sigmoid
 from torch.optim.lr_scheduler import StepLR
 
 from sirfshampoo.optimizer import SIRFShampoo
@@ -120,17 +120,17 @@ def test__one_param_group_per_preconditioner():
             "alpha1": 0.5,
         },
         {
-            "params": [model.inner.linear.weight],
-            **defaults,
-            "preconditioner_dtypes": 2 * (float32,),
-            "structures": 2 * ("dense",),
-        },
-        {
             "params": [model.linear2.bias],
             **defaults,
             "alpha1": 0.5,
             "preconditioner_dtypes": (float32,),
             "structures": ("dense",),
+        },
+        {
+            "params": [model.inner.linear.weight],
+            **defaults,
+            "preconditioner_dtypes": 2 * (float32,),
+            "structures": 2 * ("dense",),
         },
     ]
 
@@ -156,6 +156,13 @@ def test__one_param_group_per_preconditioner():
             "structures": 2 * ("dense",),
         },
         {
+            "params": [model.linear2.bias],
+            **defaults,
+            "alpha1": 0.5,
+            "structures": ("dense",),
+            "preconditioner_dtypes": (float32,),
+        },
+        {
             "params": [model.linear1.bias],
             **defaults,
             "structures": ("dense",),
@@ -166,13 +173,6 @@ def test__one_param_group_per_preconditioner():
             **defaults,
             "preconditioner_dtypes": 2 * (float32,),
             "structures": 2 * ("dense",),
-        },
-        {
-            "params": [model.linear2.bias],
-            **defaults,
-            "alpha1": 0.5,
-            "structures": ("dense",),
-            "preconditioner_dtypes": (float32,),
         },
     ]
 
@@ -389,3 +389,49 @@ def test_batch_size_accumulation():
     model.eval()
     model(zeros(some_other_B, D_in))
     assert optimizer.batch_size == some_B
+
+
+class ParamsOutsideLayers(Module):
+    """Neural network which has parameters outside its layers."""
+
+    def __init__(self, D_in: int, D_hidden: int, D_out: int):
+        """Set up the internal layers.
+
+        Args:
+            D_in: Input dimension.
+            D_hidden: Hidden dimension.
+            D_out: Output dimension.
+        """
+        super().__init__()
+        self.outside_weight = Parameter(rand(D_in, D_in))
+        self.sequential = Sequential(
+            OrderedDict(
+                {
+                    "linear1": Linear(D_in, D_hidden, bias=False),
+                    "relu": ReLU(),
+                    "linear2": Linear(D_hidden, D_out, bias=False),
+                    "sigmoid": Sigmoid(),
+                }
+            )
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        """Forward pass of the model.
+
+        Args:
+            x: Input tensor.
+
+        Returns:
+            Output tensor.
+        """
+        return self.sequential(self.outside_weight @ x)
+
+
+def test_one_param_group_per_preconditioner_params_outside_layers():
+    """Test that parameters outside layers are properly detected.
+
+    In our definition, a layer is a module that does not have submodules.
+    """
+    D_in, D_hidden, D_out = 5, 4, 3
+    model = ParamsOutsideLayers(D_in, D_hidden, D_out)
+    SIRFShampoo(model, verbose_init=True)
