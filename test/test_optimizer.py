@@ -120,17 +120,17 @@ def test__one_param_group_per_preconditioner():
             "alpha1": 0.5,
         },
         {
-            "params": [model.inner.linear.weight],
-            **defaults,
-            "preconditioner_dtypes": 2 * (float32,),
-            "structures": 2 * ("dense",),
-        },
-        {
             "params": [model.linear2.bias],
             **defaults,
             "alpha1": 0.5,
             "preconditioner_dtypes": (float32,),
             "structures": ("dense",),
+        },
+        {
+            "params": [model.inner.linear.weight],
+            **defaults,
+            "preconditioner_dtypes": 2 * (float32,),
+            "structures": 2 * ("dense",),
         },
     ]
 
@@ -156,6 +156,13 @@ def test__one_param_group_per_preconditioner():
             "structures": 2 * ("dense",),
         },
         {
+            "params": [model.linear2.bias],
+            **defaults,
+            "alpha1": 0.5,
+            "structures": ("dense",),
+            "preconditioner_dtypes": (float32,),
+        },
+        {
             "params": [model.linear1.bias],
             **defaults,
             "structures": ("dense",),
@@ -166,13 +173,6 @@ def test__one_param_group_per_preconditioner():
             **defaults,
             "preconditioner_dtypes": 2 * (float32,),
             "structures": 2 * ("dense",),
-        },
-        {
-            "params": [model.linear2.bias],
-            **defaults,
-            "alpha1": 0.5,
-            "structures": ("dense",),
-            "preconditioner_dtypes": (float32,),
         },
     ]
 
@@ -401,9 +401,6 @@ class ParamsOutsideLayers(Module):
             D_in: Input dimension.
             D_hidden: Hidden dimension.
             D_out: Output dimension.
-
-        Returns:
-            Sequential: A nested network.
         """
         super().__init__()
         self.outside_weight = Parameter(rand(D_in, D_in))
