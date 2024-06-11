@@ -440,13 +440,15 @@ class SIRFShampoo(Optimizer):
         # NOTE `GK`, `KT_K`, and `Tr_KTK` have scalings to improve numerical stability.
         # Therefore, the update reads differently to the version in the paper.
 
-        # from sirfshampoo.debug import get_H_values
+        from torch import allclose
 
-        # key = "param"
-        # precond_B_blocks = {
-        #     f"{key}_dim-{N - dim}": K.to_dense() for dim, K in enumerate(Ks)
-        # }
-        # H_values = get_H_values(key, G * sqrt(self.batch_size), precond_B_blocks, lam)
+        from sirfshampoo.debug import get_H_values
+
+        key = "param"
+        precond_B_blocks = {
+            f"{key}_dim-{N - dim}": K.to_dense() for dim, K in enumerate(Ks)
+        }
+        H_values = get_H_values(key, G * sqrt(self.batch_size), precond_B_blocks, lam)
 
         for n, dt, dim, m_K, K in zip(range(N), dtypes, dims, m_Ks, Ks):
             not_n = list(range(n)) + list(range(n + 1, N))
@@ -461,29 +463,55 @@ class SIRFShampoo(Optimizer):
             )
             m_K_step.diag_add_(-gamma / 2)
 
-            # print(N)
-            # # DEBUG m_K_step
-            # if N == 1:
-            #     key = f"param_dim-{N-n}"
-            #     print(f"Group {group_idx}: {key}")
-            #     from torch import allclose
+            print(N)
+            # DEBUG m_K_step
+            if N == 1:
+                key = f"param_dim-{N-n}"
+                print(f"Group {group_idx}: {key}")
 
-            #     m_K_step_dense = m_K_step.to_dense()
-            #     for i, j in zip(m_K_step_dense.flatten(), H_values[key].flatten()):
-            #         print(i, j, i / j)
-            #     print(allclose(m_K_step_dense, H_values[key]))
-            #     assert allclose(m_K_step_dense, H_values[key])
+                m_K_step_dense = m_K_step.to_dense()
+                for i, j in zip(
+                    m_K_step_dense.flatten()[:10], H_values[key].flatten()[:10]
+                ):
+                    print(i, j, i / j)
+                print(allclose(m_K_step_dense, H_values[key]))
+                assert allclose(m_K_step_dense, H_values[key])
 
-            # elif N == 2:
-            #     key = f"param_dim-{N-n}"
-            #     print(f"Group {group_idx}: {key}")
-            #     from torch import allclose
+            elif N == 2:
+                key = f"param_dim-{N-n}"
+                print(f"Group {group_idx}: {key}")
 
-            #     m_K_step_dense = m_K_step.to_dense()
-            #     for i, j in zip(m_K_step_dense.flatten(), H_values[key].flatten()):
-            #         print(i, j, i / j)
-            #     print(allclose(m_K_step_dense, H_values[key]))
-            #     assert allclose(m_K_step_dense, H_values[key])
+                m_K_step_dense = m_K_step.to_dense()
+                for i, j in zip(
+                    m_K_step_dense.flatten()[:10], H_values[key].flatten()[:10]
+                ):
+                    print(i, j, i / j)
+                print(allclose(m_K_step_dense, H_values[key]))
+                assert allclose(m_K_step_dense, H_values[key])
+
+            elif N == 3:
+                key = f"param_dim-{N-n}"
+                print(f"Group {group_idx}: {key}")
+
+                m_K_step_dense = m_K_step.to_dense()
+                for i, j in zip(
+                    m_K_step_dense.flatten()[:10], H_values[key].flatten()[:10]
+                ):
+                    print(i, j, i / j)
+                print(allclose(m_K_step_dense, H_values[key]))
+                assert allclose(m_K_step_dense, H_values[key])
+
+            elif N == 4:
+                key = f"param_dim-{N-n}"
+                print(f"Group {group_idx}: {key}")
+
+                m_K_step_dense = m_K_step.to_dense()
+                for i, j in zip(
+                    m_K_step_dense.flatten()[:10], H_values[key].flatten()[:10]
+                ):
+                    print(i, j, i / j)
+                print(allclose(m_K_step_dense, H_values[key]))
+                assert allclose(m_K_step_dense, H_values[key])
 
             # Update Riemannian momentum on K_n
             m_K.mul_(alpha2)
