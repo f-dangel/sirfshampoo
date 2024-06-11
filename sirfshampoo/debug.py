@@ -100,69 +100,69 @@ def get_H_values(key, G, precond_B_blocks, damping, scaling=1.0):
         k = torch.tensor(range(d3))
         results[name3][k, k] = torch.diagonal(results[name3]) - 1.0 / (2.0 * scaling)
 
-    # elif len(G.shape) == 4:  # 4d tensor
-    #     name1 = "%s_dim-%d" % (key, 1)
-    #     name2 = "%s_dim-%d" % (key, 2)
-    #     name3 = "%s_dim-%d" % (key, 3)
-    #     name4 = "%s_dim-%d" % (key, 4)
-    #     d1 = precond_B_blocks[name1].shape[0]
-    #     d2 = precond_B_blocks[name2].shape[0]
-    #     d3 = precond_B_blocks[name3].shape[0]
-    #     d4 = precond_B_blocks[name4].shape[0]
+    elif len(G.shape) == 4:  # 4d tensor
+        name1 = "%s_dim-%d" % (key, 1)
+        name2 = "%s_dim-%d" % (key, 2)
+        name3 = "%s_dim-%d" % (key, 3)
+        name4 = "%s_dim-%d" % (key, 4)
+        d1 = precond_B_blocks[name1].shape[0]
+        d2 = precond_B_blocks[name2].shape[0]
+        d3 = precond_B_blocks[name3].shape[0]
+        d4 = precond_B_blocks[name4].shape[0]
 
-    #     B1 = precond_B_blocks[name1] / math.sqrt(d1)
-    #     B2 = precond_B_blocks[name2] / math.sqrt(d2)
-    #     B3 = precond_B_blocks[name3] / math.sqrt(d3)
-    #     B4 = precond_B_blocks[name4] / math.sqrt(d4)
-    #     results[name1] = B1.t() @ B1
-    #     results[name2] = B2.t() @ B2
-    #     results[name3] = B3.t() @ B3
-    #     results[name4] = B4.t() @ B4
-    #     tr_BBt1 = torch.trace(results[name1])
-    #     tr_BBt2 = torch.trace(results[name2])
-    #     tr_BBt3 = torch.trace(results[name3])
-    #     tr_BBt4 = torch.trace(results[name4])
-    #     results[name1].mul_((d1 * damping) * tr_BBt2 * tr_BBt3 * tr_BBt4 / 2.0)
-    #     results[name2].mul_((d2 * damping) * tr_BBt1 * tr_BBt3 * tr_BBt4 / 2.0)
-    #     results[name3].mul_((d3 * damping) * tr_BBt1 * tr_BBt2 * tr_BBt4 / 2.0)
-    #     results[name4].mul_((d4 * damping) * tr_BBt1 * tr_BBt2 * tr_BBt3 / 2.0)
+        B1 = precond_B_blocks[name1] / math.sqrt(d1)
+        B2 = precond_B_blocks[name2] / math.sqrt(d2)
+        B3 = precond_B_blocks[name3] / math.sqrt(d3)
+        B4 = precond_B_blocks[name4] / math.sqrt(d4)
+        results[name1] = B1.t() @ B1
+        results[name2] = B2.t() @ B2
+        results[name3] = B3.t() @ B3
+        results[name4] = B4.t() @ B4
+        tr_BBt1 = torch.trace(results[name1])
+        tr_BBt2 = torch.trace(results[name2])
+        tr_BBt3 = torch.trace(results[name3])
+        tr_BBt4 = torch.trace(results[name4])
+        results[name1].mul_((d1 * damping) * tr_BBt2 * tr_BBt3 * tr_BBt4 / 2.0)
+        results[name2].mul_((d2 * damping) * tr_BBt1 * tr_BBt3 * tr_BBt4 / 2.0)
+        results[name3].mul_((d3 * damping) * tr_BBt1 * tr_BBt2 * tr_BBt4 / 2.0)
+        results[name4].mul_((d4 * damping) * tr_BBt1 * tr_BBt2 * tr_BBt3 / 2.0)
 
-    #     tmp_common = torch.einsum("pi,ijkl->pjkl", B4.t(), G)
-    #     tmp_a = torch.einsum("pjkl,jq->pqkl", tmp_common, B3)
-    #     tmp1_half = torch.einsum("pqkl,km->pqml", tmp_a, B2)
-    #     tmp11 = torch.einsum("pqml,lu->pqmu", tmp1_half, precond_B_blocks[name1]).view(
-    #         -1, d1
-    #     )
-    #     results[name1].add_(tmp11.t() @ tmp11, alpha=1.0 / 2.0)
-    #     k = torch.tensor(range(d1))
-    #     results[name1][k, k] = torch.diagonal(results[name1]) - 1.0 / (2.0 * scaling)
+        tmp_common = torch.einsum("pi,ijkl->pjkl", B4.t(), G)
+        tmp_a = torch.einsum("pjkl,jq->pqkl", tmp_common, B3)
+        tmp1_half = torch.einsum("pqkl,km->pqml", tmp_a, B2)
+        tmp11 = torch.einsum("pqml,lu->pqmu", tmp1_half, precond_B_blocks[name1]).view(
+            -1, d1
+        )
+        results[name1].add_(tmp11.t() @ tmp11, alpha=1.0 / 2.0)
+        k = torch.tensor(range(d1))
+        results[name1][k, k] = torch.diagonal(results[name1]) - 1.0 / (2.0 * scaling)
 
-    #     tmp2_half = torch.einsum("pqkl,lw->pqkw", tmp_a, B1)
-    #     tmp22 = torch.einsum("pqkw,ku->pqwu", tmp2_half, precond_B_blocks[name2]).view(
-    #         -1, d2
-    #     )
-    #     results[name2].add_(tmp22.t() @ tmp22, alpha=1.0 / 2.0)
-    #     k = torch.tensor(range(d2))
-    #     results[name2][k, k] = torch.diagonal(results[name2]) - 1.0 / (2.0 * scaling)
+        tmp2_half = torch.einsum("pqkl,lw->pqkw", tmp_a, B1)
+        tmp22 = torch.einsum("pqkw,ku->pqwu", tmp2_half, precond_B_blocks[name2]).view(
+            -1, d2
+        )
+        results[name2].add_(tmp22.t() @ tmp22, alpha=1.0 / 2.0)
+        k = torch.tensor(range(d2))
+        results[name2][k, k] = torch.diagonal(results[name2]) - 1.0 / (2.0 * scaling)
 
-    #     tmp_b = torch.einsum("pjkl,km->pjml", tmp_common, B2)
-    #     tmp3_half = torch.einsum("pjml,lw->pjmw", tmp_b, B1)
-    #     tmp33 = torch.einsum("pjmw,ju->pmwu", tmp3_half, precond_B_blocks[name3]).view(
-    #         -1, d3
-    #     )
-    #     results[name3].add_(tmp33.t() @ tmp33, alpha=1.0 / 2.0)
-    #     k = torch.tensor(range(d3))
-    #     results[name3][k, k] = torch.diagonal(results[name3]) - 1.0 / (2.0 * scaling)
+        tmp_b = torch.einsum("pjkl,km->pjml", tmp_common, B2)
+        tmp3_half = torch.einsum("pjml,lw->pjmw", tmp_b, B1)
+        tmp33 = torch.einsum("pjmw,ju->pmwu", tmp3_half, precond_B_blocks[name3]).view(
+            -1, d3
+        )
+        results[name3].add_(tmp33.t() @ tmp33, alpha=1.0 / 2.0)
+        k = torch.tensor(range(d3))
+        results[name3][k, k] = torch.diagonal(results[name3]) - 1.0 / (2.0 * scaling)
 
-    #     tmp_remaining = torch.einsum("ijkl,jq->iqkl", G, B3)
-    #     tmp_c = torch.einsum("iqkl,km->iqml", tmp_remaining, B2)
-    #     tmp4_half = torch.einsum("iqml,lw->iqmw", tmp_c, B1)
-    #     tmp44 = torch.einsum("iqmw,iu->qmwu", tmp4_half, precond_B_blocks[name4]).view(
-    #         -1, d4
-    #     )
-    #     results[name4].add_(tmp44.t() @ tmp44, alpha=1.0 / 2.0)
-    #     k = torch.tensor(range(d4))
-    #     results[name4][k, k] = torch.diagonal(results[name4]) - 1.0 / (2.0 * scaling)
+        tmp_remaining = torch.einsum("ijkl,jq->iqkl", G, B3)
+        tmp_c = torch.einsum("iqkl,km->iqml", tmp_remaining, B2)
+        tmp4_half = torch.einsum("iqml,lw->iqmw", tmp_c, B1)
+        tmp44 = torch.einsum("iqmw,iu->qmwu", tmp4_half, precond_B_blocks[name4]).view(
+            -1, d4
+        )
+        results[name4].add_(tmp44.t() @ tmp44, alpha=1.0 / 2.0)
+        k = torch.tensor(range(d4))
+        results[name4][k, k] = torch.diagonal(results[name4]) - 1.0 / (2.0 * scaling)
 
     else:
         raise NotImplementedError
