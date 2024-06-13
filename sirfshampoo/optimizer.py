@@ -449,11 +449,10 @@ class SIRFShampoo(Optimizer):
         for n, dt, m_K, K in zip(range(N), dtypes, m_Ks, Ks):
             not_n = list(range(n)) + list(range(n + 1, N))
             GK = GK.to(dt)
-            m_K_step = K.from_dense(
-                tensordot(GK, GK, dims=(not_n, not_n)).mul_(dims[n] / 2)
+            m_K_step = KTKs.pop(0).mul_(lam / 2 * Tr_KTKs[not_n].prod() * dims.prod())
+            m_K_step.add_(
+                K.from_dense(tensordot(GK, GK, dims=(not_n, not_n))), alpha=dims[n] / 2
             )
-            KTK_n = KTKs.pop(0)
-            m_K_step.add_(KTK_n, alpha=lam / 2 * Tr_KTKs[not_n].prod() * dims.prod())
             m_K_step.diag_add_(-gamma / 2)
 
             # Update Riemannian momentum on K_n
@@ -480,10 +479,21 @@ class SIRFShampoo(Optimizer):
         Ks = self.preconditioner[group_idx]
         (N,) = {len(Ks), len(dtypes), G.ndim}
 
-        for n, dt, K in zip(range(N), dtypes, Ks):
+        # NOTE To improve numerical stability, we scale each Kronecker factor
+        # before multiplying it onto the gradient. We deliberately use `item`
+        # here because each `K` might have its individual data type
+        scales = array(
+            [K.infinity_vector_norm().sqrt().clamp(min=1.0).item() for K in Ks]
+        )
+
+        for n, dt, K, scale in zip(range(N), dtypes, Ks, scales):
+            K_scaled = K * (1 / scale)
             # multiply K Kᵀ onto axis n
-            G = tensormatdot(G.to(dt), K, n, transpose=True)
-            G = tensormatdot(G, K, n)
+            G = tensormatdot(G.to(dt), K_scaled, n, transpose=True)
+            G = tensormatdot(G, K_scaled, n)
+
+        # correct the scaling
+        G.mul_((scales**2).prod())
 
         return TensorCombiner.ungroup(G, [p.shape for p in params])
 
