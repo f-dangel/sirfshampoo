@@ -449,11 +449,10 @@ class SIRFShampoo(Optimizer):
         for n, dt, m_K, K in zip(range(N), dtypes, m_Ks, Ks):
             not_n = list(range(n)) + list(range(n + 1, N))
             GK = GK.to(dt)
-            m_K_step = K.from_dense(
-                tensordot(GK, GK, dims=(not_n, not_n)).mul_(dims[n] / 2)
+            m_K_step = KTKs.pop(0).mul_(lam / 2 * Tr_KTKs[not_n].prod() * dims.prod())
+            m_K_step.add_(
+                K.from_dense(tensordot(GK, GK, dims=(not_n, not_n))), alpha=dims[n] / 2
             )
-            KTK_n = KTKs.pop(0)
-            m_K_step.add_(KTK_n, alpha=lam / 2 * Tr_KTKs[not_n].prod() * dims.prod())
             m_K_step.diag_add_(-gamma / 2)
 
             # Update Riemannian momentum on K_n
