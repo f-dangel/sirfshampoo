@@ -446,7 +446,7 @@ class SIRFShampoo(Optimizer):
         # 2) UPDATE THE KRONECKER FACTORS
         # NOTE `GK`, `KT_K`, and `Tr_KTK` have scalings to improve numerical stability.
         # Therefore, the update reads differently to the version in the paper.
-        for n, dt, dim, m_K, K in zip(range(N), dtypes, dims, m_Ks, Ks):
+        for n, dt, m_K, K in zip(range(N), dtypes, m_Ks, Ks):
             not_n = list(range(n)) + list(range(n + 1, N))
             GK = GK.to(dt)
             m_K_step = K.from_dense(
