@@ -480,10 +480,21 @@ class SIRFShampoo(Optimizer):
         Ks = self.preconditioner[group_idx]
         (N,) = {len(Ks), len(dtypes), G.ndim}
 
-        for n, dt, K in zip(range(N), dtypes, Ks):
+        # NOTE To improve numerical stability, we scale each Kronecker factor
+        # before multiplying it onto the gradient. We deliberately use `item`
+        # here because each `K` might have its individual data type
+        scales = array(
+            [K.infinity_vector_norm().sqrt().clamp(min=1.0).item() for K in Ks]
+        )
+
+        for n, dt, K, scale in zip(range(N), dtypes, Ks, scales):
+            K_scaled = K * (1 / scale)
             # multiply K Kᵀ onto axis n
-            G = tensormatdot(G.to(dt), K, n, transpose=True)
-            G = tensormatdot(G, K, n)
+            G = tensormatdot(G.to(dt), K_scaled, n, transpose=True)
+            G = tensormatdot(G, K_scaled, n)
+
+        # correct the scaling
+        G.mul_((scales**2).prod())
 
         return TensorCombiner.ungroup(G, [p.shape for p in params])
 
