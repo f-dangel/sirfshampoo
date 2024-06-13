@@ -1,5 +1,6 @@
 """Implementation of structured inverse-, root-free Shampoo."""
 
+from copy import deepcopy
 from math import sqrt
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 
@@ -34,7 +35,6 @@ class SIRFShampoo(Optimizer):
             classes of structured matrices that can be used for the pre-conditioner.
             Currently, only `'dense'` is supported.
 
-    TODO Implement update rule for Nd tensors
     TODO Support more structures
     """
 
@@ -240,11 +240,14 @@ class SIRFShampoo(Optimizer):
         new_param_groups = []
         for params in treat_jointly:
             old_group = self.param_groups[param_to_group[params[0].data_ptr()]]
-            T = old_group["T"]
-            if callable(T):
-                import copy
-                old_group['T'] = copy.deepcopy(T)
-            new_param_groups.append({**old_group, "params": params})
+
+            # If T is a class with internal state we do not want this state to be shared
+            # between parameter groups because otherwise calling T of one parameter
+            # group might have side effects on other groups that use the same T.
+            # Hence, create an independent copy if T is callable.
+            T = deepcopy(old_group["T"]) if callable(old_group["T"]) else old_group["T"]
+
+            new_param_groups.append({**old_group, "params": params, "T": T})
 
         self.param_groups = new_param_groups
 
