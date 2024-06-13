@@ -5,6 +5,8 @@ import torch
 
 def get_H_values(key, G, precond_B_blocks, damping, scaling=1.0):
     results = {}
+    (dt,) = {B.dtype for B in precond_B_blocks.values()}
+    G = G.to(dt)
 
     # we assume that G = torch.squeeze(p_grad)
     if len(G.shape) == 1:
