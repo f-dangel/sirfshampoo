@@ -1,5 +1,6 @@
 """Implementation of structured inverse-, root-free Shampoo."""
 
+from copy import deepcopy
 from math import sqrt
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 
@@ -34,7 +35,6 @@ class SIRFShampoo(Optimizer):
             classes of structured matrices that can be used for the pre-conditioner.
             Currently, only `'dense'` is supported.
 
-    TODO Implement update rule for Nd tensors
     TODO Support more structures
     """
 
@@ -240,7 +240,14 @@ class SIRFShampoo(Optimizer):
         new_param_groups = []
         for params in treat_jointly:
             old_group = self.param_groups[param_to_group[params[0].data_ptr()]]
-            new_param_groups.append({**old_group, "params": params})
+
+            # If T is a class with internal state we do not want this state to be shared
+            # between parameter groups because otherwise calling T of one parameter
+            # group might have side effects on other groups that use the same T.
+            # Hence, create an independent copy if T is callable.
+            T = deepcopy(old_group["T"]) if callable(old_group["T"]) else old_group["T"]
+
+            new_param_groups.append({**old_group, "params": params, "T": T})
 
         self.param_groups = new_param_groups
 
@@ -418,7 +425,7 @@ class SIRFShampoo(Optimizer):
 
         # 1) PRE-COMPUTE QUANTITIES THAT ARE SHARED BY ALL UPDATES
         # Multiply each Kronecker factor onto the gradient axis it preconditions
-        GK = G
+        GK = G * sqrt(self.batch_size)
         KTKs, Tr_KTKs = [], []
         for n, K, dt, dim in zip(range(N), Ks, dtypes, dims):
             GK = GK.to(dt)
@@ -426,7 +433,7 @@ class SIRFShampoo(Optimizer):
             # (i) multiplication onto G, (ii) computing its self-outer product KᵀK,
             # and (iii) its trace Tr(KᵀK)
             K_scaled = K * (1 / sqrt(dim))
-            GK = tensormatdot(GK, K_scaled, n)
+            GK = tensormatdot(GK, K_scaled, n, transpose=True)
             KTK = K_scaled.from_inner()
             KTKs.append(KTK)
             # NOTE Deliberately convert to python float here to simplify computing the
@@ -439,21 +446,22 @@ class SIRFShampoo(Optimizer):
         # 2) UPDATE THE KRONECKER FACTORS
         # NOTE `GK`, `KT_K`, and `Tr_KTK` have scalings to improve numerical stability.
         # Therefore, the update reads differently to the version in the paper.
-        B = self.batch_size
-        for n, dt, dim, m_K, K in zip(range(N), dtypes, dims, m_Ks, Ks):
+        for n, dt, m_K, K in zip(range(N), dtypes, m_Ks, Ks):
             not_n = list(range(n)) + list(range(n + 1, N))
             GK = GK.to(dt)
-            m_K_step = K.from_dense(tensordot(GK, GK, dims=(not_n, not_n))).mul_(B)
+            m_K_step = K.from_dense(
+                tensordot(GK, GK, dims=(not_n, not_n)).mul_(dims[n] / 2)
+            )
             KTK_n = KTKs.pop(0)
-            m_K_step.add_(KTK_n, alpha=lam * Tr_KTKs[not_n].prod() * dims[not_n].prod())
-            m_K_step.diag_add_(-gamma / dim)
+            m_K_step.add_(KTK_n, alpha=lam / 2 * Tr_KTKs[not_n].prod() * dims.prod())
+            m_K_step.diag_add_(-gamma / 2)
 
             # Update Riemannian momentum on K_n
             m_K.mul_(alpha2)
-            m_K.add_(m_K_step, alpha=(1 - alpha2) * dim / 2)
+            m_K.add_(m_K_step, alpha=1 - alpha2)
 
             # update K_n (first-order truncation of matrix exponential)
-            K.add_(m_K, alpha=-beta2 / K.frobenius_norm().clamp(min=1.0))
+            K.add_(K @ m_K, alpha=-beta2 / m_K.frobenius_norm().clamp(min=1.0))
 
     def _precondition_gradient(self, group_idx: int) -> List[Tensor]:
         """Multiply the pre-conditioner onto the gradient for a parameter group.
