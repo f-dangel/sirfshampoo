@@ -3,3 +3,4 @@
 .eggs
 /.coverage
 **.DS_Store
+docs/generated/
