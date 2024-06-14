@@ -43,9 +43,10 @@ loss_func = CrossEntropyLoss().to(DEV)
 # ## Optimizer Setup
 #
 # One difference to many built-in PyTorch optimizers is that `SIRFShampoo` requires
-# access to the neural network (a `torch.nn.Module`):
+# access to the neural network (a `torch.nn.Module`). Let's also turn on verbose
+# initialization to get some insights into the pre-conditioners:
 
-optimizer = SIRFShampoo(model)
+optimizer = SIRFShampoo(model, verbose_init=True)
 
 # %%
 #
