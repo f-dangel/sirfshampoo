@@ -23,6 +23,7 @@ def setup() -> Tuple[Sequential, Module, SIRFShampoo]:
         ReLU(),
         Flatten(),
         Linear(432, 200),
+        ReLU(),
         Linear(200, 50),
         ReLU(),
         Linear(50, 10),
