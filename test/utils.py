@@ -81,9 +81,6 @@ def compare_optimizers(optim1: SIRFShampoo, optim2: SIRFShampoo):
     Args:
         optim1: First optimizer.
         optim2: Second optimizer.
-
-    Raises:
-        ValueError: If two entries of a parameter group cannot be compared.
     """
     assert optim1.global_step == optim2.global_step
     assert optim1.batch_size == optim2.batch_size
