@@ -12,7 +12,7 @@ Some highlights of the optimizer:
   based update (no matrix decompositions)
 - Compatible with any architecture as the pre-conditioner only uses mini-batch
   gradients
-- Kronecker structures can have structures to reduce memory and computation,
+- Kronecker factors can have structures to reduce memory and computation,
   thanks to [our previous SINGD work](https://arxiv.org/pdf/2312.05705)
 
 ## Installation

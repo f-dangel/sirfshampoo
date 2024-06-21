@@ -34,6 +34,13 @@ class SIRFShampoo(Optimizer):
         SUPPORTED_STRUCTURES: A dictionary mapping structure names to the respective
             classes of structured matrices that can be used for the pre-conditioner.
             Currently, only `'dense'` is supported.
+        STATE_ATTRIBUTES: Attributes that belong to the optimizer's state but are
+            not stored inside the `self.state` attribute. They will be saved
+            and restored when the optimizer is check-pointed (by calling
+            [`.state_dict()`](\
+https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.state_dict.html) and
+            [`.load_state_dict()`](\
+https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.html)).
 
     TODO Support more structures
     """
@@ -132,7 +139,7 @@ class SIRFShampoo(Optimizer):
             params = [p for p in model.parameters() if p.requires_grad]
         super().__init__(params, defaults)
 
-        self.model = model
+        self.param_to_names = {p.data_ptr(): n for n, p in model.named_parameters()}
         self.global_step = 0
 
         # batch size detection
@@ -157,11 +164,10 @@ class SIRFShampoo(Optimizer):
                 if module.training:
                     self.batch_size += batch_size(inputs)
 
-            self.batch_size_handle = model.register_forward_pre_hook(hook)
+            model.register_forward_pre_hook(hook)
         else:
             self.batch_size = batch_size
             self.batch_size_valid = "always"
-            self.batch_size_handle = None
 
         # we rewrite the original parameter groups and create new ones such that each
         # parameter group contains the parameters that are treated jointly with one
@@ -206,10 +212,9 @@ class SIRFShampoo(Optimizer):
 
     def print_group_info(self) -> None:
         """Print information about the parameter groups and pre-conditioners."""
-        param_to_names = {p.data_ptr(): n for n, p in self.model.named_parameters()}
         print("Parameter groups:")
         for i, group in enumerate(self.param_groups):
-            param_names = [param_to_names[p.data_ptr()] for p in group["params"]]
+            param_names = [self.param_to_names[p.data_ptr()] for p in group["params"]]
             other = {k: v for k, v in group.items() if k != "params"}
             precs = self.preconditioner[i]
             shapes = [(str(s) for s in p.to_dense().shape) for p in precs]
@@ -572,3 +577,38 @@ class SIRFShampoo(Optimizer):
                 dtypes = tuple(default_dt if dt is None else dt for dt in dtypes)
 
             group["preconditioner_dtypes"] = dtypes
+
+    STATE_ATTRIBUTES: List[str] = [
+        "global_step",
+        "batch_size",
+        "batch_size_valid",
+        "preconditioner",
+        "preconditioner_momenta",
+    ]
+
+    def state_dict(self) -> Dict[str, Any]:
+        """Return a save-able state of the optimizer.
+
+        Returns:
+            A dictionary containing the optimizer state.
+        """
+        state_dict = super().state_dict()
+
+        for name in self.STATE_ATTRIBUTES:
+            assert name not in state_dict.keys()
+            state_dict[name] = getattr(self, name)
+
+        return state_dict
+
+    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+        """Load an optimizer state.
+
+        Args:
+            state_dict: A dictionary containing a valid state obtained from this
+                class's `.state_dict()` method.
+        """
+        attributes = {name: state_dict.pop(name) for name in self.STATE_ATTRIBUTES}
+        super().load_state_dict(state_dict)
+
+        for name, value in attributes.items():
+            setattr(self, name, value)
