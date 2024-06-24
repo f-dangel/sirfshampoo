@@ -12,7 +12,7 @@ from singd.structures.diagonal import DiagonalMatrix
 from singd.structures.hierarchical import Hierarchical15_15Matrix
 from singd.structures.triltoeplitz import TrilToeplitzMatrix
 from singd.structures.triutoeplitz import TriuToeplitzMatrix
-from torch import Tensor, dtype, tensordot, zeros_like
+from torch import Tensor, dtype, zeros_like
 from torch.nn import Module, Parameter
 from torch.optim import Optimizer
 
