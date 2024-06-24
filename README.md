@@ -29,8 +29,11 @@ Some highlights of the optimizer:
 
 ## Usage
 
- - [Basic
-   example](https://sirfshampoo.readthedocs.io/en/latest/generated/gallery/example_01_basic/)
+- [Basic
+  example](https://sirfshampoo.readthedocs.io/en/latest/generated/gallery/example_01_basic/)
+
+- [Advanced
+  example](https://sirfshampoo.readthedocs.io/en/latest/generated/gallery/example_02_param_groups/)
 
 ## Limitations
 
