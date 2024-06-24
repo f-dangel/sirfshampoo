@@ -6,7 +6,12 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 
 from numpy import array
 from singd.structures.base import StructuredMatrix
+from singd.structures.blockdiagonal import Block30DiagonalMatrix
 from singd.structures.dense import DenseMatrix
+from singd.structures.diagonal import DiagonalMatrix
+from singd.structures.hierarchical import Hierarchical15_15Matrix
+from singd.structures.triltoeplitz import TrilToeplitzMatrix
+from singd.structures.triutoeplitz import TriuToeplitzMatrix
 from torch import Tensor, dtype, tensordot, zeros_like
 from torch.nn import Module, Parameter
 from torch.optim import Optimizer
@@ -33,7 +38,6 @@ class SIRFShampoo(Optimizer):
     Attributes:
         SUPPORTED_STRUCTURES: A dictionary mapping structure names to the respective
             classes of structured matrices that can be used for the pre-conditioner.
-            Currently, only `'dense'` is supported.
         STATE_ATTRIBUTES: Attributes that belong to the optimizer's state but are
             not stored inside the `self.state` attribute. They will be saved
             and restored when the optimizer is check-pointed (by calling
@@ -41,11 +45,16 @@ class SIRFShampoo(Optimizer):
 https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.state_dict.html) and
             [`.load_state_dict()`](\
 https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.html)).
-
-    TODO Support more structures
     """
 
-    SUPPORTED_STRUCTURES: Dict[str, Type[StructuredMatrix]] = {"dense": DenseMatrix}
+    SUPPORTED_STRUCTURES: Dict[str, Type[StructuredMatrix]] = {
+        "dense": DenseMatrix,
+        "diagonal": DiagonalMatrix,
+        "block30diagonal": Block30DiagonalMatrix,
+        "hierarchical15_15": Hierarchical15_15Matrix,
+        "triltoeplitz": TrilToeplitzMatrix,
+        "triutoeplitz": TriuToeplitzMatrix,
+    }
 
     def __init__(
         self,
@@ -111,7 +120,9 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
                   means that 1d tensors will be predonditioned with a single dense
                   Kronecker factor, 2d tensors with a dense and a diagonal factor, and
                   3d tensors with three diagonal factors.
-                Supported choices are `'dense'`.
+                Supported choices are `'dense'`, `'diagonal'`, `'block30diagonal'`,
+                `'hierarchical15_15'`, `'triltoeplitz'`, and `'triutoeplitz'`. See
+                [Figure 5](https://arxiv.org/pdf/2312.05705v3) for an illustration.
             preconditioner_dtypes: The data type to use for the pre-conditioner. There
                 are multiple ways to specify this and the format is identical to that of
                 `structures`. E.g. `{1: bfloat16, 2: (float32, float16), 3: float32}`
@@ -453,11 +464,24 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
         # Therefore, the update reads differently to the version in the paper.
         for n, dt, m_K, K in zip(range(N), dtypes, m_Ks, Ks):
             not_n = list(range(n)) + list(range(n + 1, N))
-            GK = GK.to(dt)
             m_K_step = KTKs.pop(0).mul_(lam / 2 * Tr_KTKs[not_n].prod() * dims.prod())
-            m_K_step.add_(
-                K.from_dense(tensordot(GK, GK, dims=(not_n, not_n))), alpha=dims[n] / 2
-            )
+
+            # TODO Add flag `is_identity` to `StructuredMatrix.from_inner`, which will
+            # compute the structured matrix of `I.T @ X @ X.T @ I` if enabled. This will
+            # unify the if-else branches below into first computing the matrix view
+            # `GK_n` of `GK` and then calling `from_inner` with `is_identity=True`.
+
+            # move n-th dimension first, flatten all others
+            GK_n = GK.to(dt).movedim(n, 0)
+            GK_n = GK_n.unsqueeze(-1) if N == 1 else GK_n.flatten(start_dim=1)
+            # create structured matrix of `GK_n @ GK_n.T`
+            if not isinstance(K, DenseMatrix):
+                I = K.eye(GK.shape[n], dtype=dt, device=GK.device)
+                GK_n_outer = I.from_inner(GK_n)
+            else:  # more efficient without explicit dense identity matrix
+                GK_n_outer = K.from_dense(GK_n @ GK_n.T)
+
+            m_K_step.add_(GK_n_outer, alpha=dims[n] / 2)
             m_K_step.diag_add_(-gamma / 2)
 
             # Update Riemannian momentum on K_n

@@ -1,7 +1,7 @@
 """Test `sirfshampoo.optimizer` module."""
 
 from collections import OrderedDict
-from typing import Callable, Optional, Tuple, Union
+from typing import Callable, Dict, Optional, Tuple, Union
 
 from pytest import mark, raises
 from torch import Tensor, bfloat16, dtype, float16, float32, manual_seed, rand, zeros
@@ -213,7 +213,16 @@ PRECONDITIONER_DTYPE_IDS = [
     f"dtypes={dt}".replace("\n", "") for dt in PRECONDITIONER_DTYPES
 ]
 
+STRUCTURES = list(SIRFShampoo.SUPPORTED_STRUCTURES.keys()) + [
+    {1: "triltoeplitz", 2: ("dense", "diagonal")},  # dictionary format
+]
+STRUCTURE_IDS = [
+    f"structures={structures}".replace("\n", "").replace(" ", "")
+    for structures in STRUCTURES
+]
 
+
+@mark.parametrize("structures", STRUCTURES, ids=STRUCTURE_IDS)
 @mark.parametrize(
     "preconditioner_dtypes", PRECONDITIONER_DTYPES, ids=PRECONDITIONER_DTYPE_IDS
 )
@@ -223,6 +232,7 @@ def test_step_integration(
     T: Union[int, Callable[[int], bool]],
     schedule_lr: bool,
     preconditioner_dtypes: Optional[Union[dtype, Tuple[dtype, ...]]],
+    structures: Optional[Union[str, Dict[int, Union[str, Tuple[str, ...]]]]],
 ):
     """Check the optimizer is able to take a couple of steps without erroring.
 
@@ -230,6 +240,7 @@ def test_step_integration(
         T: Pre-conditioner update schedule.
         schedule_lr: Whether to use a learning rate scheduler.
         preconditioner_dtypes: Pre-conditioner data types.
+        structures: Pre-conditioner structures.
     """
     manual_seed(0)
     batch_size = 6
@@ -239,7 +250,12 @@ def test_step_integration(
     X, y = rand(batch_size, D_in), rand(batch_size, D_out)
 
     optimizer = SIRFShampoo(
-        model, lr=0.1, kappa=0.001, T=T, preconditioner_dtypes=preconditioner_dtypes
+        model,
+        lr=0.1,
+        kappa=0.001,
+        T=T,
+        preconditioner_dtypes=preconditioner_dtypes,
+        structures=structures,
     )
     num_steps = 5
     if schedule_lr:
