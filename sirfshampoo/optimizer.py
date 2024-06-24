@@ -476,8 +476,8 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
             GK_n = GK_n.unsqueeze(-1) if N == 1 else GK_n.flatten(start_dim=1)
             # create structured matrix of `GK_n @ GK_n.T`
             if not isinstance(K, DenseMatrix):
-                I = K.eye(GK.shape[n], dtype=dt, device=GK.device)
-                GK_n_outer = I.from_inner(GK_n)
+                Id = K.eye(GK.shape[n], dtype=dt, device=GK.device)
+                GK_n_outer = Id.from_inner(GK_n)
             else:  # more efficient without explicit dense identity matrix
                 GK_n_outer = K.from_dense(GK_n @ GK_n.T)
 
