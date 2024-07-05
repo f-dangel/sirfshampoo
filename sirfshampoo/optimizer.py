@@ -466,20 +466,11 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
             not_n = list(range(n)) + list(range(n + 1, N))
             m_K_step = KTKs.pop(0).mul_(lam / 2 * Tr_KTKs[not_n].prod() * dims.prod())
 
-            # TODO Add flag `is_identity` to `StructuredMatrix.from_inner`, which will
-            # compute the structured matrix of `I.T @ X @ X.T @ I` if enabled. This will
-            # unify the if-else branches below into first computing the matrix view
-            # `GK_n` of `GK` and then calling `from_inner` with `is_identity=True`.
-
             # move n-th dimension first, flatten all others
             GK_n = GK.to(dt).movedim(n, 0)
             GK_n = GK_n.unsqueeze(-1) if N == 1 else GK_n.flatten(start_dim=1)
             # create structured matrix of `GK_n @ GK_n.T`
-            if not isinstance(K, DenseMatrix):
-                Id = K.eye(GK.shape[n], dtype=dt, device=GK.device)
-                GK_n_outer = Id.from_inner(GK_n)
-            else:  # more efficient without explicit dense identity matrix
-                GK_n_outer = K.from_dense(GK_n @ GK_n.T)
+            GK_n_outer = K.from_mat_inner(GK_n)
 
             m_K_step.add_(GK_n_outer, alpha=dims[n] / 2)
             m_K_step.diag_add_(-gamma / 2)
