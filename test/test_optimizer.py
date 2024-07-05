@@ -221,7 +221,11 @@ STRUCTURE_IDS = [
     for structures in STRUCTURES
 ]
 
+ALPHA2S = [0.5, 0.0]
+ALPHA2_IDS = [f"alpha2={alpha2}" for alpha2 in ALPHA2S]
 
+
+@mark.parametrize("alpha2", ALPHA2S, ids=ALPHA2_IDS)
 @mark.parametrize("structures", STRUCTURES, ids=STRUCTURE_IDS)
 @mark.parametrize(
     "preconditioner_dtypes", PRECONDITIONER_DTYPES, ids=PRECONDITIONER_DTYPE_IDS
@@ -231,8 +235,11 @@ STRUCTURE_IDS = [
 def test_step_integration(
     T: Union[int, Callable[[int], bool]],
     schedule_lr: bool,
-    preconditioner_dtypes: Optional[Union[dtype, Tuple[dtype, ...]]],
-    structures: Optional[Union[str, Dict[int, Union[str, Tuple[str, ...]]]]],
+    preconditioner_dtypes: Optional[
+        Union[dtype, Dict[int, Union[None, dtype, Tuple[Union[None, dtype], ...]]]]
+    ],
+    structures: Union[str, Dict[int, Union[str, Tuple[str, ...]]]],
+    alpha2: float,
 ):
     """Check the optimizer is able to take a couple of steps without erroring.
 
@@ -241,6 +248,7 @@ def test_step_integration(
         schedule_lr: Whether to use a learning rate scheduler.
         preconditioner_dtypes: Pre-conditioner data types.
         structures: Pre-conditioner structures.
+        alpha2: Riemannian momentum on the pre-conditioner matrices.
     """
     manual_seed(0)
     batch_size = 6
@@ -252,6 +260,7 @@ def test_step_integration(
     optimizer = SIRFShampoo(
         model,
         lr=0.1,
+        alpha2=alpha2,
         kappa=0.001,
         T=T,
         preconditioner_dtypes=preconditioner_dtypes,
@@ -296,8 +305,12 @@ def verify_preconditioner_dtypes(optimizer: SIRFShampoo):
         for prec, mom, dt in zip(preconditioner, preconditioner_momenta, dtypes):
             (prec_dt,) = {t.dtype for _, t in prec.named_tensors()}
             assert prec_dt == dt
-            (mom_dt,) = {t.dtype for _, t in mom.named_tensors()}
-            assert mom_dt == dt
+
+            if group["alpha2"] == 0.0:
+                assert mom is None
+            else:
+                (mom_dt,) = {t.dtype for _, t in mom.named_tensors()}
+                assert mom_dt == dt
 
 
 def verify_preconditioner_structures(optimizer: SIRFShampoo):
@@ -315,7 +328,11 @@ def verify_preconditioner_structures(optimizer: SIRFShampoo):
         assert len(preconditioner) == len(preconditioner_momenta) == len(structures)
         for prec, mom, s in zip(preconditioner, preconditioner_momenta, structures):
             assert isinstance(prec, optimizer.SUPPORTED_STRUCTURES[s])
-            assert isinstance(mom, optimizer.SUPPORTED_STRUCTURES[s])
+
+            if group["alpha2"] == 0.0:
+                assert mom is None
+            else:
+                assert isinstance(mom, optimizer.SUPPORTED_STRUCTURES[s])
 
 
 def test__verify_hyperparameters():

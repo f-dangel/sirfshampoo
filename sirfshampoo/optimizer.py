@@ -190,6 +190,8 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
         self._standardize_preconditioner_dtypes()
         self._verify_hyperparameters()
 
+        self._initialize_momentum_buffers()
+
         # The pre-conditioner for one group is a list of matrices (the Kronecker
         # factors). For a layer with 2d weight of shape `(D_out, D_in)`, the entries are
         # (C, K) from the paper where C is `(D_out, D_out)` and K is `(D_in, D_in)`.
@@ -197,8 +199,8 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
             self._initialize_preconditioner("identity")
         )
         # same for the momenta, i.e. (m_C, m_K) from the paper for a 2d weight
-        self.preconditioner_momenta: List[List[StructuredMatrix]] = (
-            self._initialize_preconditioner("zero")
+        self.preconditioner_momenta: List[List[Union[StructuredMatrix, None]]] = (
+            self._initialize_preconditioner("zero", is_momentum=True)
         )
 
         if verbose_init:
@@ -326,17 +328,26 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
                     f"number of Kronecker matrices ({N})."
                 )
 
-    def _initialize_preconditioner(self, method: str) -> List[List[StructuredMatrix]]:
-        """Return preconditioner matrices initialized to identity.
+    def _initialize_preconditioner(
+        self, method: str, is_momentum: bool = False
+    ) -> List[List[Union[None, StructuredMatrix]]]:
+        """Return initialized preconditioner matrices.
 
         Data type and devices are inferred from the parameters.
 
         Args:
             method: The method to use for preconditioning.
                 Must either be `'identity` or `'zero'`.
+            is_momentum: Whether the produced matrices are used for the Riemannian
+                momentum. If `True`, then this will either create a structured matrix
+                (Riemannian momentum enabled) or `None` (Riemannian momentum disabled).
+                Default is `False`.
 
         Returns:
             A list of preconditioner matrices, one list per parameter group.
+            If `is_momentum` is `True` and the user has Riemannian momentum (`alpha2`)
+            disabled, each group's list entries will be `None` instead of a structured
+            matrix.
 
         Raises:
             ValueError: If the method is not supported.
@@ -360,8 +371,9 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
                 raise RuntimeError(
                     "Number of structures, data dtypes, and dimensions do not match."
                 )
-
-            if method == "identity":
+            if is_momentum and group["alpha2"] == 0.0:
+                preconditioners.append([None] * len(classes))
+            elif method == "identity":
                 preconditioners.append(
                     [cls.eye(d, **kw) for cls, d, kw in zip(classes, dims, kwargs)]
                 )
@@ -376,6 +388,13 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
                 )
 
         return preconditioners
+
+    def _initialize_momentum_buffers(self):
+        """Initialize the momentum buffers."""
+        for group in self.param_groups:
+            if group["alpha1"] != 0.0:
+                for p in group["params"]:
+                    self.state[p]["momentum_buffer"] = zeros_like(p.data)
 
     def _step(self, group_idx):
         """Perform a single optimization step for a group.
@@ -400,13 +419,9 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
                 p_step.add_(p.data, alpha=kappa)
 
             # momentum on previous updates
-            if alpha1 != 0:
-                param_state = self.state[p]
-                if "momentum_buffer" not in param_state:
-                    param_state["momentum_buffer"] = zeros_like(p.data)
-
-                param_state["momentum_buffer"].mul_(alpha1).add_(p_step)
-                p_step = param_state["momentum_buffer"]
+            if alpha1 != 0.0:
+                self.state[p]["momentum_buffer"].mul_(alpha1).add_(p_step)
+                p_step = self.state[p]["momentum_buffer"]
 
             p.data.add_(p_step, alpha=-lr)
 
@@ -476,8 +491,11 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
             m_K_step.diag_add_(-gamma / 2)
 
             # Update Riemannian momentum on K_n
-            m_K.mul_(alpha2)
-            m_K.add_(m_K_step, alpha=1 - alpha2)
+            if alpha2 != 0.0:
+                m_K.mul_(alpha2)
+                m_K.add_(m_K_step, alpha=1 - alpha2)
+            else:
+                m_K = m_K_step
 
             # update K_n (first-order truncation of matrix exponential)
             K.add_(K @ m_K, alpha=-beta2 / m_K.frobenius_norm().clamp(min=1.0))
