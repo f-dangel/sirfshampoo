@@ -12,3 +12,8 @@
     options:
         members:
             - __init__
+
+::: sirfshampoo.LinearWeightBias
+    options:
+        members:
+            - __init__

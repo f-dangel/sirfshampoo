@@ -77,7 +77,7 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
         preconditioner_dtypes: Optional[
             Union[dtype, Dict[int, Union[None, dtype, Tuple[Union[None, dtype], ...]]]]
         ] = None,
-        combine_params: Tuple[PreconditionerGroup] = DEFAULT_COMBINE_PARAMS,
+        combine_params: Tuple[PreconditionerGroup, ...] = DEFAULT_COMBINE_PARAMS,
         verbose_init: bool = False,
     ):
         """Set up the optimizer.

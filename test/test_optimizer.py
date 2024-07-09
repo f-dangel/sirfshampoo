@@ -8,7 +8,7 @@ from torch import Tensor, bfloat16, dtype, float16, float32, manual_seed, rand, 
 from torch.nn import Linear, Module, MSELoss, Parameter, ReLU, Sequential, Sigmoid
 from torch.optim.lr_scheduler import StepLR
 
-from sirfshampoo.combiner import PerParameter, PreconditionerGroup
+from sirfshampoo.combiner import LinearWeightBias, PerParameter, PreconditionerGroup
 from sirfshampoo.optimizer import DEFAULT_COMBINE_PARAMS, SIRFShampoo
 
 
@@ -210,6 +210,42 @@ def test__one_param_group_per_preconditioner():
         }
     ]
 
+    # one parameter group, treat weights and biases of linear layers jointly
+    # different data types for pre-conditioner
+    param_groups = [
+        {"params": list(model.parameters()), **defaults},
+    ]
+    optimizer = SIRFShampoo(
+        model,
+        params=param_groups,
+        combine_params=(LinearWeightBias(), PerParameter()),
+        verbose_init=True,
+    )
+    assert len(optimizer.param_groups) == 3
+    assert optimizer.param_groups == [
+        {
+            "params": [model.linear1.weight, model.linear1.bias],
+            **defaults,
+            "preconditioner_dtypes": 2 * (float32,),
+            "structures": 2 * ("dense",),
+            "combine_params": optimizer.param_groups[0]["combine_params"],
+        },
+        {
+            "params": [model.linear2.weight, model.linear2.bias],
+            **defaults,
+            "structures": 2 * ("dense",),
+            "preconditioner_dtypes": 2 * (float32,),
+            "combine_params": optimizer.param_groups[1]["combine_params"],
+        },
+        {
+            "params": [model.inner.linear.weight],
+            **defaults,
+            "preconditioner_dtypes": 2 * (float32,),
+            "structures": 2 * ("dense",),
+            "combine_params": optimizer.param_groups[2]["combine_params"],
+        },
+    ]
+
 
 T_CASES = [1, lambda step: step in [0, 3]]
 T_CASE_IDS = ["every", "custom"]
@@ -242,6 +278,7 @@ ALPHA2_IDS = [f"alpha2={alpha2}" for alpha2 in ALPHA2S]
 COMBINE_PARAMS = [
     DEFAULT_COMBINE_PARAMS,
     (PerParameter(), PerParameter()),  # same rule supplied multiple times
+    (LinearWeightBias(), PerParameter()),  # same rule supplied multiple times
 ]
 COMBINE_PARAMS_IDS = [
     f"combine_params=({', '.join(str(c.__class__.__name__) for c in combine_params)})"
@@ -265,7 +302,7 @@ def test_step_integration(
     ],
     structures: Union[str, Dict[int, Union[str, Tuple[str, ...]]]],
     alpha2: float,
-    combine_params: Tuple[PreconditionerGroup],
+    combine_params: Tuple[PreconditionerGroup, ...],
 ):
     """Check the optimizer is able to take a couple of steps without erroring.
 
@@ -506,3 +543,8 @@ def test_lost_parameters_during_preconditioner_detection():
 
     with raises(ValueError):
         SIRFShampoo(model, combine_params=())  # empty detection rule
+
+    with raises(ValueError):
+        SIRFShampoo(
+            model, combine_params=(LinearWeightBias(),)
+        )  # loses the linear layer without bias
