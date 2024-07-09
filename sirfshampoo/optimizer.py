@@ -86,16 +86,8 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
         Methods?](https://openreview.net/pdf?id=vuMD71R20q).
 
         Note:
-            We currently treat weights and biases of a layer independently, because this
-            this the approach in the paper. It will be more memory- and time-efficient
-            to combine parameters, e.g. to append the bias of a linear layer as last
-            column to the weight matrix. We will make such parameter groupings fully
-            customizable in the future.
-
-        Note:
             We rewrite the parameter groups such that parameters sharing a pre-
-            conditioner (e.g. weight and bias of a linear layer if both parameters are
-            in the same original parameter group). This simplifies the internal book-
+            conditioner are in one group. This simplifies the internal book-
             keeping when updating the pre-conditioner and parameters.
 
         Args:
