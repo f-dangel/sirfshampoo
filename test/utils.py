@@ -5,6 +5,7 @@ from typing import Any
 from singd.structures.base import StructuredMatrix
 from torch import Tensor, allclose, cuda, device, isclose
 
+from sirfshampoo.combiner import PreconditionerGroup
 from sirfshampoo.optimizer import SIRFShampoo
 
 DEVICES = [device("cpu")] + [device(f"cuda:{i}") for i in range(cuda.device_count())]
@@ -71,6 +72,10 @@ def compare(obj1: Any, obj2: Any, name: str = "object"):
         assert len(obj1) == len(obj2)
         for e1, e2 in zip(obj1, obj2):
             report_nonclose(e1.to_dense(), e2.to_dense(), name=name)
+    elif isinstance(obj1, PreconditionerGroup) and isinstance(
+        obj2, PreconditionerGroup
+    ):
+        assert type(obj1) is type(obj2)
     else:
         raise NotImplementedError(f"Unsupported comparison for type: {type(obj1)}.")
 
@@ -120,6 +125,7 @@ def compare_optimizers(optim1: SIRFShampoo, optim2: SIRFShampoo):
         "structures",
         "preconditioner_dtypes",
         "params",
+        "combine_params",
     }
     assert len(optim1.param_groups) == len(optim2.param_groups)
     for group1, group2 in zip(optim1.param_groups, optim2.param_groups):

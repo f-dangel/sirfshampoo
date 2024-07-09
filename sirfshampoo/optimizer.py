@@ -136,12 +136,12 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
                 for the first and `float16` for the second factor, and 3d tensors will
                 use `float32` for all factors. If `None`, the parameter's data type will
                 be used. Default: `None`.
-            combine_params: A tuple of `PreconditionerGroup` objects that specify how to combine
-                parameters into combinations which share a pre-conditioner. Leading
-                rules are prioritized over trailing entries, i.e. if a parameter matches
-                with multiple rules, the earlier rule is used. By default, this tuple
-                contains a single rule that treats each parameter of a neural network
-                with an independent pre-conditioner.
+            combine_params: A tuple of `PreconditionerGroup` objects that specify how to
+                combine parameters into combinations which share a pre-conditioner.
+                Leading rules are prioritized over trailing entries, i.e. if a parameter
+                matches with multiple rules, the earlier rule is used. By default, this
+                tuple contains a single rule that treats each parameter of a neural
+                network with an independent pre-conditioner.
             verbose_init: Whether to print information at initialization, i.e. how
                 parameters are grouped and what pre-conditioners are used.
                 Default: `False`.
@@ -304,7 +304,7 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
             )
         if non_unique := [(name, occ) for name, occ in occurrences.items() if occ > 1]:
             raise ValueError(
-                f"Detected parameters which were assigned to multiple pre-conditioners: "
+                f"Detected parameters assigned to multiple pre-conditioners: "
                 f"{non_unique}. Please submit a bug report."
             )
 
