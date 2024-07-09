@@ -16,7 +16,7 @@ from torch import Tensor, dtype, zeros_like
 from torch.nn import Module, Parameter
 from torch.optim import Optimizer
 
-from sirfshampoo.combiner import TensorCombiner
+from sirfshampoo.combiner import PerParameter, PreconditionerGroup
 from sirfshampoo.utils import tensormatdot
 
 
@@ -30,6 +30,11 @@ def get_batch_size(inputs: Tuple[Tensor, ...]) -> int:
         The batch size.
     """
     return inputs[0].shape[0]
+
+
+# Default strategy for forming parameter combinations that are treated jointly with one
+# shared pre-conditioner: treat each parameter independently.
+DEFAULT_COMBINE_PARAMS = (PerParameter(),)
 
 
 class SIRFShampoo(Optimizer):
@@ -72,6 +77,7 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
         preconditioner_dtypes: Optional[
             Union[dtype, Dict[int, Union[None, dtype, Tuple[Union[None, dtype], ...]]]]
         ] = None,
+        combine_params: Tuple[PreconditionerGroup] = DEFAULT_COMBINE_PARAMS,
         verbose_init: bool = False,
     ):
         """Set up the optimizer.
@@ -130,6 +136,12 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
                 for the first and `float16` for the second factor, and 3d tensors will
                 use `float32` for all factors. If `None`, the parameter's data type will
                 be used. Default: `None`.
+            combine_params: A tuple of `PreconditionerGroup` objects that specify how to
+                combine parameters into combinations which share a pre-conditioner.
+                Leading rules are prioritized over trailing entries, i.e. if a parameter
+                matches with multiple rules, the earlier rule is used. By default, this
+                tuple contains a single rule that treats each parameter of a neural
+                network with an independent pre-conditioner.
             verbose_init: Whether to print information at initialization, i.e. how
                 parameters are grouped and what pre-conditioners are used.
                 Default: `False`.
@@ -144,6 +156,7 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
             T=T,
             structures=structures,
             preconditioner_dtypes=preconditioner_dtypes,
+            combine_params=combine_params,
         )
 
         if params is None:
@@ -184,7 +197,7 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
         # parameter group contains the parameters that are treated jointly with one
         # pre-conditioner. This simplifies book-keeping when updating the
         # pre-conditioner and taking a step.
-        self._one_param_group_per_preconditioner()
+        self._one_param_group_per_preconditioner(model)
         # convert structure and dtype arguments into tuples
         self._standardize_structures()
         self._standardize_preconditioner_dtypes()
@@ -241,13 +254,17 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
                 f"\n\t- Pre-conditioner: {prec_desc}\n\t- Other: {other}"
             )
 
-    def _one_param_group_per_preconditioner(self) -> None:
-        """Overwrite param groups so that one group shares a pre-conditioner."""
-        params = sum((group["params"] for group in self.param_groups), [])
+    def _one_param_group_per_preconditioner(self, model: Module) -> None:
+        """Overwrite param groups so that one group shares a pre-conditioner.
 
-        # create list entries where each entry lists parameters that are treated jointly
-        # treat each parameter with an independent pre-conditioner
-        treat_jointly = [[p] for p in params]
+        Args:
+            model: The model whose parameters are optimized.
+
+        Raises:
+            ValueError: If a parameter was lost while detecting pre-conditioner groups
+                or is assigned to multiple pre-conditioners.
+        """
+        params = sum((group["params"] for group in self.param_groups), [])
 
         # create new parameter groups, one per pre-conditioner
         param_to_group = {
@@ -255,17 +272,62 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
             for i, group in enumerate(self.param_groups)
             for p in group["params"]
         }
+
+        treat_jointly = []
+        combiners = []
+
+        # figure out which parameters to treat jointly with one pre-conditioner
+        for i, group in enumerate(self.param_groups):
+            for combiner in group["combine_params"]:
+                candidates = combiner.identify(model)
+                for candidate in candidates:
+                    processed = {p.data_ptr() for p in sum(treat_jointly, [])}
+                    if all(
+                        p.requires_grad
+                        and p.data_ptr() not in processed
+                        and p.data_ptr() in param_to_group
+                        and param_to_group[p.data_ptr()] == i
+                        for p in candidate
+                    ):
+                        treat_jointly.append(candidate)
+                        combiners.append(combiner)
+
+        # make sure each parameter of the group was detected by a rule
+        processed = [p.data_ptr() for p in sum(treat_jointly, [])]
+        occurrences = {
+            self.param_to_names[p.data_ptr()]: processed.count(p.data_ptr())
+            for p in params
+        }
+        if lost := [name for (name, occ) in occurrences.items() if occ == 0]:
+            raise ValueError(
+                f"Lost parameters during pre-conditioner group detection: {lost}"
+            )
+        if non_unique := [(name, occ) for name, occ in occurrences.items() if occ > 1]:
+            raise ValueError(
+                f"Detected parameters assigned to multiple pre-conditioners: "
+                f"{non_unique}. Please submit a bug report."
+            )
+
         new_param_groups = []
-        for params in treat_jointly:
+        for params, combiner in zip(treat_jointly, combiners):
             old_group = self.param_groups[param_to_group[params[0].data_ptr()]]
 
             # If T is a class with internal state we do not want this state to be shared
             # between parameter groups because otherwise calling T of one parameter
             # group might have side effects on other groups that use the same T.
             # Hence, create an independent copy if T is callable.
+            # Same for the class handling (un-)grouping the tensors
             T = deepcopy(old_group["T"]) if callable(old_group["T"]) else old_group["T"]
+            combine_params = deepcopy(combiner)
 
-            new_param_groups.append({**old_group, "params": params, "T": T})
+            new_param_groups.append(
+                {
+                    **old_group,
+                    "params": params,
+                    "T": T,
+                    "combine_params": combine_params,
+                }
+            )
 
         self.param_groups = new_param_groups
 
@@ -312,7 +374,8 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
 
         for group in self.param_groups:
             params = group["params"]
-            N = TensorCombiner().group(params).ndim
+            combiner = group["combine_params"]
+            N = combiner.group(params).ndim
 
             structures = group["structures"]
             if len(structures) != N:
@@ -365,7 +428,8 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
             dtypes = group["preconditioner_dtypes"]
             kwargs = [{"dtype": dt, "device": dev} for dt in dtypes]
 
-            dims = TensorCombiner.group(params).shape
+            combiner = group["combine_params"]
+            dims = combiner.group(params).shape
 
             if not len(dtypes) == len(classes) == len(dims):
                 raise RuntimeError(
@@ -444,9 +508,10 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
         alpha2 = group["alpha2"]
         beta2 = group["beta2"]
         lam = group["lam"]
+        combiner = group["combine_params"]
 
         # arrange the gradients into the tensor that is pre-conditioned
-        G = TensorCombiner.group([p.grad for p in group["params"]])
+        G = combiner.group([p.grad for p in group["params"]])
         dims = G.shape
         dtypes = group["preconditioner_dtypes"]
 
@@ -512,7 +577,8 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
         """
         group = self.param_groups[group_idx]
         params = group["params"]
-        G = TensorCombiner.group([p.grad for p in params])
+        combiner = group["combine_params"]
+        G = combiner.group([p.grad for p in params])
         dtypes = group["preconditioner_dtypes"]
         Ks = self.preconditioner[group_idx]
         (N,) = {len(Ks), len(dtypes), G.ndim}
@@ -533,7 +599,7 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
         # correct the scaling
         G.mul_((scales**2).prod())
 
-        return TensorCombiner.ungroup(G, [p.shape for p in params])
+        return combiner.ungroup(G, [p.shape for p in params])
 
     def _standardize_structures(self):
         """Standardize the values for structures in parameter groups.
@@ -547,9 +613,10 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
         for group in self.param_groups:
             structures = group["structures"]
             params = group["params"]
+            combiner = group["combine_params"]
 
             # number of Kronecker factors
-            N = TensorCombiner.group(params).ndim
+            N = combiner.group(params).ndim
 
             # overwrite structures in parameter group
             if isinstance(structures, str):
@@ -583,9 +650,10 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
         for group in self.param_groups:
             dtypes = group["preconditioner_dtypes"]
             params = group["params"]
+            combiner = group["combine_params"]
 
             # number of Kronecker factors
-            N = TensorCombiner.group(params).ndim
+            N = combiner.group(params).ndim
 
             # detect data types and overwrite entry in parameter groups
             if isinstance(dtypes, dtype) or dtypes is None:

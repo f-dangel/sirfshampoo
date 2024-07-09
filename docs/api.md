@@ -4,4 +4,11 @@
             - __init__
             - step
             - state_dict
-            - load_dict
+            - load_state_dict
+
+::: sirfshampoo.PreconditionerGroup
+
+::: sirfshampoo.PerParameter
+    options:
+        members:
+            - __init__
