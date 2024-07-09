@@ -87,13 +87,12 @@ optimizer = SIRFShampoo(
     verbose_init=True,
 )
 
-
 # %%
 #
 # Note that now there are only three parameter groups, and two of them contain the
 # weight and bias of a linear layer (also, the pre-conditioner dimensions are slightly
-# different). The third group is simply weight of the first layer which does not have a
-# bias term. You can also see under `'Other'` that the first two groups use a
+# different). The third group is simply the weight of the first layer which does not
+# have a bias term. You can also see under `'Other'` that the first two groups use a
 # `LinearWeightBias` instance under `'combine_params'`, while the last group uses a
 # `PerParameter` instance.
 #
@@ -113,12 +112,11 @@ with raises(ValueError):
         combine_params=(LinearWeightBias(),),
     )
 
-
 # %%
 #
 # ## Writing Custom Pre-conditioner Groups
 #
-# So far we discussed the default option to treat each parameter with its own
+# So far, we discussed the default option to treat each parameter with its own
 # pre-conditioner via [`PerParameter`](
 # https://sirfshampoo.readthedocs.io/en/latest/api/#sirfshampoo.PerParameter),
 # and to combine weight and bias of a linear layer with [`LinearWeightBias`](
@@ -147,8 +145,8 @@ class SeparateWeightsJointBiases(PreconditionerGroup):
             model: The neural network.
 
         Returns:
-            A list of lists. Each sub-list contains either a single weight or all
-            biases.
+            A list of lists. Each sub-list contains the parameters that are treated
+            jointly, i.e. either a single weight or all biases.
         """
         independent = []
 
@@ -202,16 +200,17 @@ class SeparateWeightsJointBiases(PreconditionerGroup):
             return [grouped_tensor.reshape(tensor_shapes[0])]
 
         # bias case
-        bias_dims = [s.numel() for s in tensor_shapes]
-        tensors = grouped_tensor.split(bias_dims)
+        bias_sizes = [s.numel() for s in tensor_shapes]
+        tensors = grouped_tensor.split(bias_sizes)
         return [t.reshape(s) for t, s in zip(tensors, tensor_shapes)]
 
 
 # %%
 #
-# Let's create an optimizer with this custom rule (note that specifying per-parameter
-# rule as fallback would not be necessary here because our custom rule matches all
-# parameters that are trained; but doing so is in general good practise).
+# Let's create an optimizer with this custom rule (note that specifying the
+# per-parameter rule as fallback would not be necessary here because our custom
+# rule matches all parameters that are trained; but doing so is in general good
+# practise).
 
 optimizer = SIRFShampoo(
     model,
