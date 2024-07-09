@@ -16,7 +16,7 @@ from torch import Tensor, dtype, zeros_like
 from torch.nn import Module, Parameter
 from torch.optim import Optimizer
 
-from sirfshampoo.combiner import PerParameter, TensorGroup
+from sirfshampoo.combiner import PerParameter, PreconditionerGroup
 from sirfshampoo.utils import tensormatdot
 
 
@@ -30,6 +30,11 @@ def get_batch_size(inputs: Tuple[Tensor, ...]) -> int:
         The batch size.
     """
     return inputs[0].shape[0]
+
+
+# Default strategy for forming parameter combinations that are treated jointly with one
+# shared pre-conditioner: treat each parameter independently.
+DEFAULT_COMBINE_PARAMS = (PerParameter(),)
 
 
 class SIRFShampoo(Optimizer):
@@ -72,7 +77,7 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
         preconditioner_dtypes: Optional[
             Union[dtype, Dict[int, Union[None, dtype, Tuple[Union[None, dtype], ...]]]]
         ] = None,
-        combine_params: Tuple[TensorGroup] = (PerParameter(),),
+        combine_params: Tuple[PreconditionerGroup] = DEFAULT_COMBINE_PARAMS,
         verbose_init: bool = False,
     ):
         """Set up the optimizer.
@@ -131,6 +136,12 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
                 for the first and `float16` for the second factor, and 3d tensors will
                 use `float32` for all factors. If `None`, the parameter's data type will
                 be used. Default: `None`.
+            combine_params: A tuple of `PreconditionerGroup` objects that specify how to combine
+                parameters into combinations which share a pre-conditioner. Leading
+                rules are prioritized over trailing entries, i.e. if a parameter matches
+                with multiple rules, the earlier rule is used. By default, this tuple
+                contains a single rule that treats each parameter of a neural network
+                with an independent pre-conditioner.
             verbose_init: Whether to print information at initialization, i.e. how
                 parameters are grouped and what pre-conditioners are used.
                 Default: `False`.

@@ -7,15 +7,20 @@ from torch import Size, Tensor
 from torch.nn import Module, Parameter
 
 
-class TensorGroup(ABC):
-    """Interface for treating multiple tensors with one pre-conditioner."""
+class PreconditionerGroup(ABC):
+    """Interface for treating multiple tensors with one pre-conditioner.
+
+    Users who want to specify their own rule how to group parameters into a tensor
+    which is then treated with a Kronecker-factored pre-conditioner should implement
+    this interface.
+    """
 
     @abstractmethod
     def identify(self, model: Module) -> List[List[Parameter]]:
         """Detect parameters that should be treated jointly.
 
         Args:
-            Module: The neural network.
+            model: The neural network.
 
         Returns:
             A list whose entries are list of parameters that are treated jointly.
@@ -63,14 +68,14 @@ class TensorGroup(ABC):
         raise NotImplementedError
 
 
-class PerParameter(TensorGroup):
-    """Treat each parameter with a separate pre-conditioner."""
+class PerParameter(PreconditionerGroup):
+    """Pre-conditioner group to treat each parameter with its own pre-conditioner."""
 
     def identify(self, model: Module) -> List[List[Parameter]]:
         """Detect parameters that should be treated jointly.
 
         Args:
-            Module: The neural network.
+            model: The neural network.
 
         Returns:
             A list of lists. Each sub-list contains one parameter.
@@ -110,7 +115,7 @@ class PerParameter(TensorGroup):
         return [grouped_tensor.reshape(shape)]
 
 
-# class LinearWeightAndBias(TensorGroup):
+# class LinearWeightAndBias(PreconditionerGroup):
 #     """Treat weight and bias of a linear layer jointly.
 
 #     Stacks the bias as last column to the weight matrix.
