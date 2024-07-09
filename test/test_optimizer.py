@@ -8,7 +8,8 @@ from torch import Tensor, bfloat16, dtype, float16, float32, manual_seed, rand, 
 from torch.nn import Linear, Module, MSELoss, Parameter, ReLU, Sequential, Sigmoid
 from torch.optim.lr_scheduler import StepLR
 
-from sirfshampoo.optimizer import SIRFShampoo
+from sirfshampoo.combiner import PerParameter, PreconditionerGroup
+from sirfshampoo.optimizer import DEFAULT_COMBINE_PARAMS, SIRFShampoo
 
 
 def nested_network(D_in: int, D_hidden: int, D_out: int) -> Sequential:
@@ -66,30 +67,35 @@ def test__one_param_group_per_preconditioner():
             **defaults,
             "preconditioner_dtypes": 2 * (float32,),
             "structures": 2 * ("dense",),
+            "combine_params": optimizer.param_groups[0]["combine_params"],
         },
         {
             "params": [model.linear1.bias],
             **defaults,
             "preconditioner_dtypes": (float32,),
             "structures": ("dense",),
+            "combine_params": optimizer.param_groups[1]["combine_params"],
         },
         {
             "params": [model.inner.linear.weight],
             **defaults,
             "preconditioner_dtypes": 2 * (float32,),
             "structures": 2 * ("dense",),
+            "combine_params": optimizer.param_groups[2]["combine_params"],
         },
         {
             "params": [model.linear2.weight],
             **defaults,
             "preconditioner_dtypes": 2 * (float32,),
             "structures": 2 * ("dense",),
+            "combine_params": optimizer.param_groups[3]["combine_params"],
         },
         {
             "params": [model.linear2.bias],
             **defaults,
             "preconditioner_dtypes": (float32,),
             "structures": ("dense",),
+            "combine_params": optimizer.param_groups[4]["combine_params"],
         },
     ]
 
@@ -111,6 +117,7 @@ def test__one_param_group_per_preconditioner():
             "preconditioner_dtypes": 2 * (float32,),
             "structures": 2 * ("dense",),
             "alpha1": 0.5,
+            "combine_params": optimizer.param_groups[0]["combine_params"],
         },
         {
             "params": [model.linear1.bias],
@@ -118,6 +125,7 @@ def test__one_param_group_per_preconditioner():
             "preconditioner_dtypes": (float32,),
             "structures": ("dense",),
             "alpha1": 0.5,
+            "combine_params": optimizer.param_groups[1]["combine_params"],
         },
         {
             "params": [model.linear2.bias],
@@ -125,12 +133,14 @@ def test__one_param_group_per_preconditioner():
             "alpha1": 0.5,
             "preconditioner_dtypes": (float32,),
             "structures": ("dense",),
+            "combine_params": optimizer.param_groups[2]["combine_params"],
         },
         {
             "params": [model.inner.linear.weight],
             **defaults,
             "preconditioner_dtypes": 2 * (float32,),
             "structures": 2 * ("dense",),
+            "combine_params": optimizer.param_groups[3]["combine_params"],
         },
     ]
 
@@ -154,6 +164,7 @@ def test__one_param_group_per_preconditioner():
             "alpha1": 0.5,
             "preconditioner_dtypes": 2 * (float32,),
             "structures": 2 * ("dense",),
+            "combine_params": optimizer.param_groups[0]["combine_params"],
         },
         {
             "params": [model.linear2.bias],
@@ -161,18 +172,21 @@ def test__one_param_group_per_preconditioner():
             "alpha1": 0.5,
             "structures": ("dense",),
             "preconditioner_dtypes": (float32,),
+            "combine_params": optimizer.param_groups[1]["combine_params"],
         },
         {
             "params": [model.linear1.bias],
             **defaults,
             "structures": ("dense",),
             "preconditioner_dtypes": (float32,),
+            "combine_params": optimizer.param_groups[2]["combine_params"],
         },
         {
             "params": [model.inner.linear.weight],
             **defaults,
             "preconditioner_dtypes": 2 * (float32,),
             "structures": 2 * ("dense",),
+            "combine_params": optimizer.param_groups[3]["combine_params"],
         },
     ]
 
@@ -192,6 +206,7 @@ def test__one_param_group_per_preconditioner():
             **defaults,
             "preconditioner_dtypes": (float16, bfloat16),
             "structures": 2 * ("dense",),
+            "combine_params": optimizer.param_groups[0]["combine_params"],
         }
     ]
 
@@ -224,7 +239,17 @@ STRUCTURE_IDS = [
 ALPHA2S = [0.5, 0.0]
 ALPHA2_IDS = [f"alpha2={alpha2}" for alpha2 in ALPHA2S]
 
+COMBINE_PARAMS = [
+    DEFAULT_COMBINE_PARAMS,
+    (PerParameter(), PerParameter()),  # same rule supplied multiple times
+]
+COMBINE_PARAMS_IDS = [
+    f"combine_params=({', '.join(str(c.__class__.__name__) for c in combine_params)})"
+    for combine_params in COMBINE_PARAMS
+]
 
+
+@mark.parametrize("combine_params", COMBINE_PARAMS, ids=COMBINE_PARAMS_IDS)
 @mark.parametrize("alpha2", ALPHA2S, ids=ALPHA2_IDS)
 @mark.parametrize("structures", STRUCTURES, ids=STRUCTURE_IDS)
 @mark.parametrize(
@@ -240,6 +265,7 @@ def test_step_integration(
     ],
     structures: Union[str, Dict[int, Union[str, Tuple[str, ...]]]],
     alpha2: float,
+    combine_params: Tuple[PreconditionerGroup],
 ):
     """Check the optimizer is able to take a couple of steps without erroring.
 
@@ -249,6 +275,8 @@ def test_step_integration(
         preconditioner_dtypes: Pre-conditioner data types.
         structures: Pre-conditioner structures.
         alpha2: Riemannian momentum on the pre-conditioner matrices.
+        combine_params: Rules for detecting parameters that are combined, then treated
+            with one pre-conditioner.
     """
     manual_seed(0)
     batch_size = 6
@@ -265,6 +293,7 @@ def test_step_integration(
         T=T,
         preconditioner_dtypes=preconditioner_dtypes,
         structures=structures,
+        combine_params=combine_params,
     )
     num_steps = 5
     if schedule_lr:
@@ -468,3 +497,12 @@ def test_one_param_group_per_preconditioner_params_outside_layers():
     D_in, D_hidden, D_out = 5, 4, 3
     model = ParamsOutsideLayers(D_in, D_hidden, D_out)
     SIRFShampoo(model, verbose_init=True)
+
+
+def test_lost_parameters_during_preconditioner_detection():
+    """Test that lost parameters are detected when re-writing parameter groups."""
+    D_in, D_hidden, D_out = 5, 4, 3
+    model = nested_network(D_in, D_hidden, D_out)
+
+    with raises(ValueError):
+        SIRFShampoo(model, combine_params=())  # empty detection rule

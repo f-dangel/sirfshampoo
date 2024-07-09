@@ -255,7 +255,15 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
             )
 
     def _one_param_group_per_preconditioner(self, model: Module) -> None:
-        """Overwrite param groups so that one group shares a pre-conditioner."""
+        """Overwrite param groups so that one group shares a pre-conditioner.
+
+        Args:
+            model: The model whose parameters are optimized.
+
+        Raises:
+            ValueError: If a parameter was lost while detecting pre-conditioner groups
+                or is assigned to multiple pre-conditioners.
+        """
         params = sum((group["params"] for group in self.param_groups), [])
 
         # create new parameter groups, one per pre-conditioner
@@ -273,7 +281,7 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
             for combiner in group["combine_params"]:
                 candidates = combiner.identify(model)
                 for candidate in candidates:
-                    processed = [p.data_ptr() for p in sum(treat_jointly, [])]
+                    processed = {p.data_ptr() for p in sum(treat_jointly, [])}
                     if all(
                         p.requires_grad
                         and p.data_ptr() not in processed
@@ -283,6 +291,22 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
                     ):
                         treat_jointly.append(candidate)
                         combiners.append(combiner)
+
+        # make sure each parameter of the group was detected by a rule
+        processed = [p.data_ptr() for p in sum(treat_jointly, [])]
+        occurrences = {
+            self.param_to_names[p.data_ptr()]: processed.count(p.data_ptr())
+            for p in params
+        }
+        if lost := [name for (name, occ) in occurrences.items() if occ == 0]:
+            raise ValueError(
+                f"Lost parameters during pre-conditioner group detection: {lost}"
+            )
+        if non_unique := [(name, occ) for name, occ in occurrences.items() if occ > 1]:
+            raise ValueError(
+                f"Detected parameters which were assigned to multiple pre-conditioners: "
+                f"{non_unique}. Please submit a bug report."
+            )
 
         new_param_groups = []
         for params, combiner in zip(treat_jointly, combiners):
