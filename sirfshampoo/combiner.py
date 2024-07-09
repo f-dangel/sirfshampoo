@@ -113,36 +113,3 @@ class PerParameter(PreconditionerGroup):
         """
         (shape,) = tensor_shapes
         return [grouped_tensor.reshape(shape)]
-
-
-# class LinearWeightAndBias(PreconditionerGroup):
-#     """Treat weight and bias of a linear layer jointly.
-
-#     Stacks the bias as last column to the weight matrix.
-#     """
-
-#     def identify(self, model: Module) -> List[List[Parameter]]:
-#         return [
-#             [module.weight, module.bias]
-#             for module in model.modules()
-#             if isinstance(module, Linear) and module.bias is not None
-#         ]
-
-#     def group(self, tensors: List[Tensor]) -> Tensor:
-#         t_weight, t_bias = tensors
-#         combined = stack([t_weight, t_bias.unsqueeze(1)], dim=1).squeeze()
-#         return combined.unsqueeze(0) if combined.ndim == 0 else combined
-
-#     def ungroup(
-#         self, grouped_tensor: Tensor, tensor_shapes: List[Size]
-#     ) -> List[Tensor]:
-#         (shape_weight, shape_bias) = tensor_shapes
-
-#         # if the `Linear` layer has `out_features=1`, then one dimension of the
-#         # weight matrix will be squeezed during the call to `group`.
-#         split_dim = 0 if grouped_tensor.ndim == 1 else 1
-
-#         d_in = shape_weight[1]
-#         t_weight, t_bias = split(grouped_tensor, [d_in, 1], dim=split_dim)
-
-#         return [t_weight.reshape(shape_weight), t_bias.reshape(shape_bias)]
