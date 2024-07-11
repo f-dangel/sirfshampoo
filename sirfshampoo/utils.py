@@ -1,7 +1,12 @@
 """Utility functions."""
 
+from typing import Any, Dict, List
+
 from singd.structures.base import StructuredMatrix
 from torch import Size, Tensor
+from torch.nn import Module
+
+from sirfshampoo.combiner import PerParameter
 
 
 def tensormatdot(
@@ -46,3 +51,54 @@ def tensormatdot(
         Size([result_as_mat.shape[0]]) + tensor.shape[:dim] + tensor.shape[dim + 1 :]
     )
     return result_as_mat.reshape(shape).movedim(0, dim)
+
+
+def set_up_param_groups_for_algorithmic_efficiency(
+    model: Module, beta2: float, diag_threshold: int = 2048
+) -> List[Dict[str, Any]]:
+    """Set up parameter groups for models of the algorithmic-efficiency benchmark.
+
+    Each parameter is treated with an independent pre-conditioner.
+    Norm, projection, and bias parameters use a smaller learning rate for their
+    pre-conditioner.
+
+    Args:
+        model: The neural network for which optimizer parameter groups will be created.
+        beta2: The learning rate for the pre-conditioners.
+        diag_threshold: Axis dimension threshold to use a diagonal rather than dense
+            preconditioner. Default: `2048`.
+
+    Returns:
+        List of parameter groups for the optimizer. Each parameter group specifies the
+        `'params'` and `'structures'` keys.
+    """
+    param_groups = []
+
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+
+        # use a smaller learning rate for specific parameters
+        use_beta2 = (
+            0.25 * beta2
+            if any(word in name for word in ["norm", "proj", "bias"])
+            else beta2
+        )
+
+        # use a diagonal preconditioner for large dimensions
+        preconditioner_dims = PerParameter().group([param]).shape
+        N = len(preconditioner_dims)
+        structures = tuple(
+            "diagonal" if dim > diag_threshold else "dense"
+            for dim in preconditioner_dims
+        )
+
+        param_groups.append(
+            {
+                "params": [param],
+                "beta2": use_beta2,
+                "structures": {N: structures},
+            }
+        )
+
+    return param_groups
