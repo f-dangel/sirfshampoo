@@ -53,10 +53,10 @@ def tensormatdot(
     return result_as_mat.reshape(shape).movedim(0, dim)
 
 
-def set_up_param_groups_for_algorithmic_efficiency(
+def set_up_param_groups_for_algoperf(
     model: Module, beta2: float, diag_threshold: int = 2048
 ) -> List[Dict[str, Any]]:
-    """Set up parameter groups for models of the algorithmic-efficiency benchmark.
+    """Set up parameter groups for models of the algoperf benchmark.
 
     Each parameter is treated with an independent pre-conditioner.
     Norm, projection, and bias parameters use a smaller learning rate for their
