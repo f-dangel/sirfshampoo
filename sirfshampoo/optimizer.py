@@ -12,7 +12,7 @@ from singd.structures.diagonal import DiagonalMatrix
 from singd.structures.hierarchical import Hierarchical15_15Matrix
 from singd.structures.triltoeplitz import TrilToeplitzMatrix
 from singd.structures.triutoeplitz import TriuToeplitzMatrix
-from torch import Tensor, dtype, zeros_like
+from torch import Tensor, cat, dtype, zeros_like
 from torch.nn import Module, Parameter
 from torch.optim import Optimizer
 
@@ -524,12 +524,10 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
             GK = tensormatdot(GK, K_scaled, n, transpose=True)
             KTK = K_scaled.from_inner()
             KTKs.append(KTK)
-            # NOTE Deliberately convert to python float here to simplify computing the
-            # trace products in the update. This costs GPU-CPU synchronization.
-            Tr_KTKs.append(KTK.average_trace().item())
+            Tr_KTKs.append(KTK.average_trace())
 
-        # convert to numpy array so we can use list slicing syntax
-        Tr_KTKs, dims = array(Tr_KTKs), array(dims)
+        # concatenate into tensors so we can use list slicing syntax
+        Tr_KTKs, dims = cat(Tr_KTKs), cat(dims)
 
         # 2) UPDATE THE KRONECKER FACTORS
         # NOTE `GK`, `KT_K`, and `Tr_KTK` have scalings to improve numerical stability.
@@ -576,11 +574,8 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
         (N,) = {len(Ks), len(dtypes), G.ndim}
 
         # NOTE To improve numerical stability, we scale each Kronecker factor
-        # before multiplying it onto the gradient. We deliberately use `item`
-        # here because each `K` might have its individual data type
-        scales = array(
-            [K.infinity_vector_norm().sqrt().clamp(min=1.0).item() for K in Ks]
-        )
+        # before multiplying it onto the gradient.
+        scales = cat([K.infinity_vector_norm().sqrt().clamp(min=1.0) for K in Ks])
 
         for n, dt, K, scale in zip(range(N), dtypes, Ks, scales):
             K_scaled = K * (1 / scale)
