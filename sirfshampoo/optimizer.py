@@ -574,7 +574,7 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
 
         # NOTE To improve numerical stability, we scale each Kronecker factor
         # before multiplying it onto the gradient.
-        scales = cat([K.infinity_vector_norm().sqrt().clamp(min=1.0) for K in Ks])
+        scales = stack([K.infinity_vector_norm().sqrt().clamp(min=1.0) for K in Ks])
 
         for n, dt, K, scale in zip(range(N), dtypes, Ks, scales):
             K_scaled = K * (1 / scale)
