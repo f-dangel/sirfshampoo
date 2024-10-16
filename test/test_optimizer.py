@@ -1,10 +1,21 @@
 """Test `sirfshampoo.optimizer` module."""
 
 from collections import OrderedDict
+from test.utils import DEVICE_IDS, DEVICES
 from typing import Callable, Dict, Optional, Tuple, Union
 
 from pytest import mark, raises
-from torch import Tensor, bfloat16, dtype, float16, float32, manual_seed, rand, zeros
+from torch import (
+    Tensor,
+    bfloat16,
+    device,
+    dtype,
+    float16,
+    float32,
+    manual_seed,
+    rand,
+    zeros,
+)
 from torch.nn import Linear, Module, MSELoss, Parameter, ReLU, Sequential, Sigmoid
 from torch.optim.lr_scheduler import StepLR
 
@@ -294,6 +305,7 @@ COMBINE_PARAMS_IDS = [
 )
 @mark.parametrize("schedule_lr", SCHEDULE_LRS, ids=SCHEDULE_LR_IDS)
 @mark.parametrize("T", T_CASES, ids=T_CASE_IDS)
+@mark.parametrize("dev", DEVICES, ids=DEVICE_IDS)
 def test_step_integration(
     T: Union[int, Callable[[int], bool]],
     schedule_lr: bool,
@@ -303,6 +315,7 @@ def test_step_integration(
     structures: Union[str, Dict[int, Union[str, Tuple[str, ...]]]],
     alpha2: float,
     combine_params: Tuple[PreconditionerGroup, ...],
+    dev: device,
 ):
     """Check the optimizer is able to take a couple of steps without erroring.
 
@@ -314,13 +327,14 @@ def test_step_integration(
         alpha2: Riemannian momentum on the pre-conditioner matrices.
         combine_params: Rules for detecting parameters that are combined, then treated
             with one pre-conditioner.
+        dev: Device to run the test on.
     """
     manual_seed(0)
     batch_size = 6
     D_in, D_hidden, D_out = 5, 4, 3
-    model = nested_network(D_in, D_hidden, D_out)
-    loss_func = MSELoss()
-    X, y = rand(batch_size, D_in), rand(batch_size, D_out)
+    model = nested_network(D_in, D_hidden, D_out).to(dev)
+    loss_func = MSELoss().to(dev)
+    X, y = rand(batch_size, D_in, device=dev), rand(batch_size, D_out, device=dev)
 
     optimizer = SIRFShampoo(
         model,
