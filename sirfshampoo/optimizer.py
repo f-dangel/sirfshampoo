@@ -11,7 +11,7 @@ from singd.structures.diagonal import DiagonalMatrix
 from singd.structures.hierarchical import Hierarchical15_15Matrix
 from singd.structures.triltoeplitz import TrilToeplitzMatrix
 from singd.structures.triutoeplitz import TriuToeplitzMatrix
-from torch import Tensor, cat, dtype, zeros_like
+from torch import Tensor, dtype, stack, zeros_like
 from torch.nn import Module, Parameter
 from torch.optim import Optimizer
 
@@ -525,15 +525,15 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
             KTKs.append(KTK)
             Tr_KTKs.append(KTK.average_trace())
 
-        # concatenate into tensors so we can use list slicing syntax
-        Tr_KTKs, dims = cat(Tr_KTKs), cat(dims)
+        # stack into tensor so we can use list slicing syntax
+        Tr_KTKs = stack(Tr_KTKs)
 
         # 2) UPDATE THE KRONECKER FACTORS
         # NOTE `GK`, `KT_K`, and `Tr_KTK` have scalings to improve numerical stability.
         # Therefore, the update reads differently to the version in the paper.
         for n, dt, m_K, K in zip(range(N), dtypes, m_Ks, Ks):
             not_n = list(range(n)) + list(range(n + 1, N))
-            m_K_step = KTKs.pop(0).mul_(lam / 2 * Tr_KTKs[not_n].prod() * dims.prod())
+            m_K_step = KTKs.pop(0).mul_(lam / 2 * Tr_KTKs[not_n].prod() * dims.numel())
 
             # move n-th dimension first, flatten all others
             GK_n = GK.to(dt).movedim(n, 0)
