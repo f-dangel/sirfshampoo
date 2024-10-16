@@ -4,7 +4,6 @@ from copy import deepcopy
 from math import sqrt
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 
-from numpy import array
 from singd.structures.base import StructuredMatrix
 from singd.structures.blockdiagonal import Block30DiagonalMatrix
 from singd.structures.dense import DenseMatrix
