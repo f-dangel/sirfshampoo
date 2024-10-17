@@ -3,7 +3,7 @@
 from test.utils import compare_optimizers
 from typing import Tuple
 
-from pytest import raises, skip
+from pytest import skip
 from torch import cuda, device, load, manual_seed, rand, save
 from torch.nn import Conv2d, CrossEntropyLoss, Flatten, Linear, Module, ReLU, Sequential
 from torch.utils.data import DataLoader

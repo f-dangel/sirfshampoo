@@ -437,7 +437,8 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
                 )
             else:
                 raise ValueError(
-                    f"Unsupported preconditioning method: {method}. Supported methods are 'identity' and 'zero'."
+                    f"Unsupported preconditioning method: {method}. "
+                    "Supported methods are 'identity' and 'zero'."
                 )
 
         return preconditioners
