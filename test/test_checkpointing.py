@@ -3,7 +3,8 @@
 from test.utils import compare_optimizers
 from typing import Tuple
 
-from torch import load, manual_seed, save
+from pytest import skip
+from torch import cuda, device, load, manual_seed, rand, save
 from torch.nn import Conv2d, CrossEntropyLoss, Flatten, Linear, Module, ReLU, Sequential
 from torch.utils.data import DataLoader
 from torchvision.datasets import MNIST
@@ -82,3 +83,41 @@ def test_checkpointing():
 
         if batch_idx >= MAX_STEPS:
             break
+
+
+def test_bug_34_map_location():
+    """Tests whether the pre-conditioner is correctly synced when using map location.
+
+    This bug was reported in https://github.com/f-dangel/sirfshampoo/issues/34.
+    """
+    if not cuda.is_available():
+        skip("This test requires a GPU.")
+
+    manual_seed(0)
+    dev = device("cuda:0")
+    N, D_in, D_out = 1, 1, 1
+    model = Linear(D_in, D_out).to(dev)
+    X, y = rand(N, D_in, device=dev), rand(N, D_out, device=dev)
+
+    optimizer = SIRFShampoo(model)
+
+    def train():
+        """Execute one training step."""
+        optimizer.zero_grad()
+        loss = (model(X) - y).pow(2).sum()
+        loss.backward()
+        optimizer.step()
+
+    # train one step, then store a checkpoint
+    train()
+    state_dict = {"model": model.state_dict(), "optimizer": optimizer.state_dict()}
+    checkpoint_path = "checkpoint.pt"
+    save(state_dict, checkpoint_path)
+
+    # restore checkpoint, use non-default `map_location`
+    checkpoint = load(checkpoint_path, map_location="cpu", weights_only=False)
+    model.load_state_dict(checkpoint["model"])
+    optimizer.load_state_dict(checkpoint["optimizer"])
+
+    # this should raise an error
+    train()
