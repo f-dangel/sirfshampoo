@@ -11,7 +11,7 @@ from singd.structures.diagonal import DiagonalMatrix
 from singd.structures.hierarchical import Hierarchical15_15Matrix
 from singd.structures.triltoeplitz import TrilToeplitzMatrix
 from singd.structures.triutoeplitz import TriuToeplitzMatrix
-from torch import Tensor, dtype, stack, zeros_like
+from torch import Tensor, device, dtype, stack, zeros_like
 from torch.nn import Module, Parameter
 from torch.optim import Optimizer
 
@@ -413,13 +413,12 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
             classes = [
                 self.SUPPORTED_STRUCTURES[struct] for struct in group["structures"]
             ]
-
-            params = group["params"]
-            (dev,) = {p.device for p in params}
+            dev = self._infer_device(group)
             dtypes = group["preconditioner_dtypes"]
             kwargs = [{"dtype": dt, "device": dev} for dt in dtypes]
 
             combiner = group["combine_params"]
+            params = group["params"]
             dims = combiner.group(params).shape
 
             if not len(dtypes) == len(classes) == len(dims):
@@ -438,11 +437,34 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
                 )
             else:
                 raise ValueError(
-                    f"Unsupported preconditioning method: {method}."
-                    + " Supported methods are 'identity' and 'zero'."
+                    f"Unsupported preconditioning method: {method}. "
+                    "Supported methods are 'identity' and 'zero'."
                 )
 
         return preconditioners
+
+    @staticmethod
+    def _infer_device(group: Dict[str, Any]) -> device:
+        """Infer the device of a parameter group.
+
+        At the moment, all parameters must live on the same device. This defines the
+        group's device.
+
+        Args:
+            group: The parameter group.
+
+        Returns:
+            The device of the group.
+
+        Raises:
+            RuntimeError: If the parameters live on different devices.
+        """
+        devices = {p.device for p in group["params"]}
+        if len(devices) != 1:
+            raise RuntimeError(
+                "Group's parameters live on more than one device: {devices}."
+            )
+        return devices.pop()
 
     def _initialize_momentum_buffers(self):
         """Initialize the momentum buffers."""
@@ -699,3 +721,31 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
 
         for name, value in attributes.items():
             setattr(self, name, value)
+
+        self._sync_preconditioner_device()
+
+    def _sync_preconditioner_device(self):
+        """Synchronize pre-conditioner device with group device.
+
+        The devices can become out-of-sync when loading the optimizer with non-default
+        `map_location` argument in `torch.load`.
+        """
+
+        def to_(K: StructuredMatrix, dev: device) -> StructuredMatrix:
+            for name, tensor in K.named_tensors():
+                setattr(K, name, tensor.to(dev))
+            return K
+
+        for i, group in enumerate(self.param_groups):
+            dev = self._infer_device(group)
+
+            # synchronize pre-conditioner matrices
+            for n, K_n in enumerate(self.preconditioner[i]):
+                K_n_synced = to_(K_n, dev)
+                self.preconditioner[i][n] = K_n_synced
+
+            # synchronize pre-conditioner momenta
+            for n, m_K_n in enumerate(self.preconditioner_momenta[i]):
+                if m_K_n is not None:
+                    m_K_n_synced = to_(m_K_n, dev)
+                    self.preconditioner_momenta[i][n] = m_K_n_synced
