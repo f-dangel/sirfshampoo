@@ -3,7 +3,7 @@
 from test.utils import compare_optimizers
 from typing import Tuple
 
-from pytest import skip
+from pytest import raises, skip
 from torch import cuda, device, load, manual_seed, rand, save
 from torch.nn import Conv2d, CrossEntropyLoss, Flatten, Linear, Module, ReLU, Sequential
 from torch.utils.data import DataLoader
@@ -120,4 +120,5 @@ def test_bug_34_map_location():
     optimizer.load_state_dict(checkpoint["optimizer"])
 
     # this should raise an error
-    train()
+    with raises(RuntimeError):
+        train()
