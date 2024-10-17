@@ -119,6 +119,5 @@ def test_bug_34_map_location():
     model.load_state_dict(checkpoint["model"])
     optimizer.load_state_dict(checkpoint["optimizer"])
 
-    # this should raise an error
-    with raises(RuntimeError):
-        train()
+    # make sure pre-conditioner device is consistent with gradient/parameters
+    train()
