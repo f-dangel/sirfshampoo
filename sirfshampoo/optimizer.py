@@ -4,7 +4,6 @@ from copy import deepcopy
 from math import sqrt
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 
-from numpy import array
 from singd.structures.base import StructuredMatrix
 from singd.structures.blockdiagonal import Block30DiagonalMatrix
 from singd.structures.dense import DenseMatrix
@@ -12,7 +11,7 @@ from singd.structures.diagonal import DiagonalMatrix
 from singd.structures.hierarchical import Hierarchical15_15Matrix
 from singd.structures.triltoeplitz import TrilToeplitzMatrix
 from singd.structures.triutoeplitz import TriuToeplitzMatrix
-from torch import Tensor, dtype, zeros_like
+from torch import Tensor, dtype, stack, zeros_like
 from torch.nn import Module, Parameter
 from torch.optim import Optimizer
 
@@ -524,19 +523,17 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
             GK = tensormatdot(GK, K_scaled, n, transpose=True)
             KTK = K_scaled.from_inner()
             KTKs.append(KTK)
-            # NOTE Deliberately convert to python float here to simplify computing the
-            # trace products in the update. This costs GPU-CPU synchronization.
-            Tr_KTKs.append(KTK.average_trace().item())
+            Tr_KTKs.append(KTK.average_trace())
 
-        # convert to numpy array so we can use list slicing syntax
-        Tr_KTKs, dims = array(Tr_KTKs), array(dims)
+        # stack into tensor so we can use list slicing syntax
+        Tr_KTKs = stack(Tr_KTKs)
 
         # 2) UPDATE THE KRONECKER FACTORS
         # NOTE `GK`, `KT_K`, and `Tr_KTK` have scalings to improve numerical stability.
         # Therefore, the update reads differently to the version in the paper.
         for n, dt, m_K, K in zip(range(N), dtypes, m_Ks, Ks):
             not_n = list(range(n)) + list(range(n + 1, N))
-            m_K_step = KTKs.pop(0).mul_(lam / 2 * Tr_KTKs[not_n].prod() * dims.prod())
+            m_K_step = KTKs.pop(0).mul_(lam / 2 * Tr_KTKs[not_n].prod() * dims.numel())
 
             # move n-th dimension first, flatten all others
             GK_n = GK.to(dt).movedim(n, 0)
@@ -576,11 +573,8 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
         (N,) = {len(Ks), len(dtypes), G.ndim}
 
         # NOTE To improve numerical stability, we scale each Kronecker factor
-        # before multiplying it onto the gradient. We deliberately use `item`
-        # here because each `K` might have its individual data type
-        scales = array(
-            [K.infinity_vector_norm().sqrt().clamp(min=1.0).item() for K in Ks]
-        )
+        # before multiplying it onto the gradient.
+        scales = stack([K.infinity_vector_norm().sqrt().clamp(min=1.0) for K in Ks])
 
         for n, dt, K, scale in zip(range(N), dtypes, Ks, scales):
             K_scaled = K * (1 / scale)
