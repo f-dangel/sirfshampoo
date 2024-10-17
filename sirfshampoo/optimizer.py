@@ -731,7 +731,7 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
         """
 
         def to_(K: StructuredMatrix, dev: device) -> StructuredMatrix:
-            for name, tensor in K.named_tensors:
+            for name, tensor in K.named_tensors():
                 setattr(K, name, tensor.do(dev))
 
         for i, group in enumerate(self.param_groups):
