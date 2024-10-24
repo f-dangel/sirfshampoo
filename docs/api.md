@@ -17,3 +17,8 @@
     options:
         members:
             - __init__
+
+::: sirfshampoo.FlattenEmbedding
+    options:
+        members:
+            - __init__

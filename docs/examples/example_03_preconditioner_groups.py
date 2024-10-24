@@ -15,6 +15,8 @@ Some use cases where this is useful are:
   `L x d_out x d_in` (think LLMs)
 - Reshaping a parameter tensor with a large dimension into a tensor with higher rank but
   smaller dimensions per axis (think embedding layers or large last linear layers)
+- Reshaping a parameter tensor with a large dimension into a vector and treating that
+  with a light-weight pre-conditioner (e.g. diagonal, think embedding layers)
 
 First, the imports.
 """
@@ -23,11 +25,16 @@ from collections import OrderedDict
 from typing import List
 
 from pytest import raises
-from torch import Size, Tensor, cat, cuda, device, manual_seed, rand
-from torch.nn import Linear, Module, MSELoss, Parameter, ReLU, Sequential
+from torch import Size, Tensor, cat, cuda, device, manual_seed, rand, randint
+from torch.nn import Embedding, Linear, Module, MSELoss, Parameter, ReLU, Sequential
 
 from sirfshampoo import SIRFShampoo
-from sirfshampoo.combiner import LinearWeightBias, PerParameter, PreconditionerGroup
+from sirfshampoo.combiner import (
+    FlattenEmbedding,
+    LinearWeightBias,
+    PerParameter,
+    PreconditionerGroup,
+)
 
 manual_seed(0)  # make deterministic
 DEV = device("cuda" if cuda.is_available() else "cpu")
@@ -36,17 +43,17 @@ DEV = device("cuda" if cuda.is_available() else "cpu")
 # ## Setup
 #
 # We will not train neural networks in this tutorial, but only look at `SIRFShampoo`'s
-# configuration after setting up the optimizer. We will use a simple MLP with three
-# fully-connected layers activated by ReLU:
+# configuration after setting up the optimizer. We will use a simple MLP with an
+# embedding layer (for demonstration purposes), and two fully-connected layers activated
+# by ReLU:
 
 model = Sequential(
     OrderedDict(
         {
-            "linear1": Linear(512, 256, bias=False),
+            "embedding": Embedding(64, 128),
+            "linear1": Linear(128, 32, bias=False),
             "relu1": ReLU(),
-            "linear2": Linear(256, 128),
-            "relu2": ReLU(),
-            "linear3": Linear(128, 64),
+            "linear2": Linear(32, 4),
         }
     )
 ).to(DEV)
@@ -54,18 +61,19 @@ model = Sequential(
 # %%
 # ## Default Behaviour (One Pre-conditioner per Parameter)
 #
-# By default, `SIRFShampoo` will treat each parameter with a separate pre-conditioner.
+# By default, `SIRFShampoo` will treat each parameter with a separate pre-conditioner,
+# and the number of Kronecker factors is determined by the parameter's axes.
 # We can observe this while setting up the optimizer by turning on `verbose_init=True`:
 
 optimizer = SIRFShampoo(model, verbose_init=True)
 
 # %%
 # We can read off that each parameter forms its own group that is handled with an
-# independent pre-conditioner. For instance, `'linear2.bias'` has its own `128 x 128`
+# independent pre-conditioner. For instance, `'linear2.bias'` has its own `4 x 4`
 # pre-conditioner.
 
 # %%
-# ## Built-in: Treating Weights and Biases of a Linear Layer Jointly
+# ## Built-in: Combining Weights and Biases of a Linear Layer
 #
 # If you look carefully in the example above, you can also see under the
 # `'Other'` entry of each group that there is a key `'combine_params'`. The
@@ -89,19 +97,19 @@ optimizer = SIRFShampoo(
 
 # %%
 #
-# Note that now there are only three parameter groups, and two of them contain the
+# Note that now there are only three parameter groups, and one of them contains the
 # weight and bias of a linear layer (also, the pre-conditioner dimensions are slightly
-# different). The third group is simply the weight of the first layer which does not
-# have a bias term. You can also see under `'Other'` that the first two groups use a
-# `LinearWeightBias` instance under `'combine_params'`, while the last group uses a
-# `PerParameter` instance.
+# different). The third group is simply the weight of the second layer which does not
+# have a bias term. You can also see under `'Other'` that the second group uses a
+# `LinearWeightBias` instance under `'combine_params'`, while the last group uses
+# a `PerParameter` instance.
 #
 # We had to pass the tuple `combine_params=(LinearWeightBias(), PerParameter())` to
 # the optimizer, which will iterate over the supplied rules and identify
 # pre-conditioner groups, prioritizing the rules that were supplied first.
 #
 # Had we only passed `combine_params=(LinearWeightBias(),)`, then the optimizer would
-# have crashed because it would not have been able to assign the first layer's weight
+# have crashed because it would not have been able to assign the second layer's weight
 # to a pre-conditioner:
 
 with raises(ValueError):
@@ -113,6 +121,47 @@ with raises(ValueError):
     )
 
 # %%
+# ## Built-in: Flattening Embedding Weights
+#
+# Another option that we found useful in practise is to treat the (2d) weight matrix of
+# an embedding layer as a (1d) vector, and pre-condition it with a diagonal matrix.
+# We can use the built-in [`FlattenEmbedding`](
+# https://sirfshampoo.readthedocs.io/en/latest/api/#sirfshampoo.FlattenEmbedding) rule
+# to achieve this. Also, to use a diagonal pre-conditioner for this group, we need to
+# specify two parameter groups:
+
+embedding_params = [
+    p
+    for m in model.modules()
+    if isinstance(m, Embedding)
+    for p in m.parameters()
+    if p.requires_grad
+]
+other_params = [
+    p
+    for m in model.modules()
+    if isinstance(m, Linear)
+    for p in m.parameters()
+    if p.requires_grad
+]
+
+param_groups = [
+    # Flatten embedding layer weights, pre-condition with diagonal matrix
+    {
+        "params": embedding_params,
+        "combine_params": (FlattenEmbedding(),),
+        "structures": "diagonal",
+    },
+    # Handle all other parameters with the default rule
+    {"params": other_params},
+]
+
+optimizer = SIRFShampoo(model, params=param_groups, verbose_init=True)
+
+# %%
+#
+# If you look a the first parameter group, you can see that the pre-conditioner is now
+# one factor of higher dimension and diagonal structure.
 #
 # ## Writing Custom Pre-conditioner Groups
 #
@@ -220,7 +269,7 @@ optimizer = SIRFShampoo(
 
 # %%
 #
-# As expected, the optimizer has four groups. Three contain one weight matrix each.
+# As expected, the optimizer has five groups. Three contain one weight matrix each.
 # The last group contains all bias parameters. We can also see a difference in the
 # `'combine_params` values in the `'Other'` section.
 #
@@ -228,7 +277,7 @@ optimizer = SIRFShampoo(
 
 # synthetic data
 BATCH_SIZE = 32
-X, y = rand(BATCH_SIZE, 512, device=DEV), rand(BATCH_SIZE, 64, device=DEV)
+X, y = randint(0, 32, (BATCH_SIZE,), device=DEV), rand(BATCH_SIZE, 4, device=DEV)
 loss_func = MSELoss().to(DEV)
 
 STEPS = 200
