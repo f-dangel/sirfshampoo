@@ -10,6 +10,9 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Option to treat the flattened embedding weight with one pre-conditioner
+  ([PR](https://github.com/f-dangel/sirfshampoo/pull/36))
+
 ### Changed
 
 ### Deprecated

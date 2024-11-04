@@ -1,6 +1,11 @@
 """sirfshampoo library."""
 
-from sirfshampoo.combiner import LinearWeightBias, PerParameter, PreconditionerGroup
+from sirfshampoo.combiner import (
+    FlattenEmbedding,
+    LinearWeightBias,
+    PerParameter,
+    PreconditionerGroup,
+)
 from sirfshampoo.optimizer import SIRFShampoo
 
 __all__ = [
@@ -8,4 +13,5 @@ __all__ = [
     "PreconditionerGroup",
     "PerParameter",
     "LinearWeightBias",
+    "FlattenEmbedding",
 ]

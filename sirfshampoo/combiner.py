@@ -1,10 +1,10 @@
 """Abstraction for combining multiple tensors into one."""
 
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Tuple, Type
 
 from torch import Size, Tensor, cat, split
-from torch.nn import Linear, Module, Parameter
+from torch.nn import Embedding, Linear, Module, Parameter
 
 
 class PreconditionerGroup(ABC):
@@ -119,7 +119,12 @@ class LinearWeightBias(PreconditionerGroup):
     """Treat weight and bias of a linear layer jointly.
 
     Stacks the bias as last column to the weight matrix.
+
+    Attributes:
+        LINEAR_CLS: Classes that should be detected as linear layers.
     """
+
+    LINEAR_CLS: Tuple[Type[Module]] = (Linear,)
 
     def identify(self, model: Module) -> List[List[Parameter]]:
         """Detect parameters that should be treated jointly.
@@ -134,7 +139,7 @@ class LinearWeightBias(PreconditionerGroup):
         return [
             [module.weight, module.bias]
             for module in model.modules()
-            if isinstance(module, Linear) and module.bias is not None
+            if isinstance(module, self.LINEAR_CLS) and module.bias is not None
         ]
 
     def group(self, tensors: List[Tensor]) -> Tensor:
@@ -176,3 +181,63 @@ class LinearWeightBias(PreconditionerGroup):
         t_weight, t_bias = split(grouped_tensor, [d_in, 1], dim=split_dim)
 
         return [t_weight.reshape(shape_weight), t_bias.reshape(shape_bias)]
+
+
+class FlattenAndConcatenate(PreconditionerGroup):
+    """Base class for treating flattened+concatenated params with a pre-conditioner."""
+
+    def group(self, tensors: List[Tensor]) -> Tensor:
+        """Combine tensors that are pre-conditioned jointly.
+
+        Args:
+            tensors: List of tensors to combine.
+
+        Returns:
+            Concatenated flattened tensors.
+        """
+        return cat([t.flatten() for t in tensors])
+
+    def ungroup(
+        self, grouped_tensor: Tensor, tensor_shapes: List[Size]
+    ) -> List[Tensor]:
+        """Split a combined tensor into multiple tensors.
+
+        This is the inverse operation of `group`.
+
+        Args:
+            grouped_tensor: Combined tensor.
+            tensor_shapes: Shapes of the tensors to split into.
+
+        Returns:
+            List of tensors whose shape matches those specified by `tensor_shapes`.
+        """
+        tensor_sizes = [s.numel() for s in tensor_shapes]
+        return [
+            t.reshape(s)
+            for t, s in zip(grouped_tensor.split(tensor_sizes), tensor_shapes)
+        ]
+
+
+class FlattenEmbedding(FlattenAndConcatenate):
+    """Treat flattened embedding weights with a pre-conditioner.
+
+    Attributes:
+        EMBEDDING_CLS: Classes that should be detected as embedding layers.
+    """
+
+    EMBEDDING_CLS: Tuple[Type[Module]] = (Embedding,)
+
+    def identify(self, model: Module) -> List[List[Parameter]]:
+        """Detect parameters that should be treated jointly.
+
+        Args:
+            model: The neural network.
+
+        Returns:
+            A list of lists. Each sub-list contains the weight of an embedding layer.
+        """
+        return [
+            [module.weight]
+            for module in model.modules()
+            if isinstance(module, self.EMBEDDING_CLS)
+        ]
