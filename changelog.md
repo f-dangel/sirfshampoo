@@ -19,6 +19,9 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Improve memory efficiency of using `SIRFShampoo` with `verbose_init=True`
+  ([PR](https://github.com/f-dangel/sirfshampoo/pull/37))
+
 ## [0.0.1] - 2024-06-24
 
 Initial release of the optimizer that is close to the version we used in the paper.

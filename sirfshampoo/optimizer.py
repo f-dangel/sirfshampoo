@@ -234,7 +234,7 @@ https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.load_state_dict.
             param_names = [self.param_to_names[p.data_ptr()] for p in group["params"]]
             other = {k: v for k, v in group.items() if k != "params"}
             precs = self.preconditioner[i]
-            shapes = [(str(s) for s in p.to_dense().shape) for p in precs]
+            shapes = [(str(s) for s in p.shape) for p in precs]
             structures = [p.__class__.__name__ for p in precs]
             prec_desc = [
                 f"{'x'.join(shape)} ({structure})"
