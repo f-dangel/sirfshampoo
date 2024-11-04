@@ -4,7 +4,7 @@ from test.utils import DEVICE_IDS, DEVICES
 
 from pytest import mark
 from torch import allclose, device, manual_seed, rand, zeros
-from torch.nn import Embedding, Linear
+from torch.nn import Linear
 
 from sirfshampoo.combiner import FlattenEmbedding, LinearWeightBias, PerParameter
 
