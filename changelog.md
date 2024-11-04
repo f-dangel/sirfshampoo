@@ -15,6 +15,9 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Improve memory efficiency of using `SIRFShampoo` with `verbose_init=True`
+  ([PR](https://github.com/f-dangel/sirfshampoo/pull/37))
+
 ### Deprecated
 
 ### Fixed
